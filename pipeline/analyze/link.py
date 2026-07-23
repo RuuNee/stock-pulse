@@ -77,23 +77,29 @@ def _match_score(haystack: str, entry: dict, title: str) -> float:
     return round(best, 2)
 
 
-def event_window(market: str, event_date: str) -> tuple[datetime, datetime]:
-    """UTC [start, end) covering the news that could explain that session."""
+def event_window(market: str, event_date: str,
+                 days_before: int = 1, days_after: int = 0) -> tuple[datetime, datetime]:
+    """UTC [start, end) covering the news that could explain that session.
+
+    Default is [close-1day, close): same-session drivers. Historical backfill
+    passes a wider window (days_after≥1) so next-day explanatory articles —
+    "why did X drop yesterday" — still count.
+    """
     tz, close = _CLOSE[market]
     day = datetime.strptime(event_date, "%Y-%m-%d").date()
-    end = datetime.combine(day, close, tzinfo=tz)
-    start = end - timedelta(days=1)
+    end = datetime.combine(day, close, tzinfo=tz) + timedelta(days=days_after)
+    start = datetime.combine(day, close, tzinfo=tz) - timedelta(days=days_before)
     return start, end
 
 
 def attach_news(events: list[dict], news: list[dict], market: str,
-                *, max_items: int = 5) -> list[dict]:
+                *, max_items: int = 5, days_before: int = 1, days_after: int = 0) -> list[dict]:
     """Fill each event's ``news`` list with the best-matching articles."""
     dated = [(parse_iso(n.get("publishedAt")), n) for n in news]
     dated = [(ts, n) for ts, n in dated if ts]
 
     for event in events:
-        start, end = event_window(market, event["date"])
+        start, end = event_window(market, event["date"], days_before, days_after)
         direction = 1 if event["changePct"] > 0 else -1
         scored: list[tuple[float, dict]] = []
 
@@ -126,7 +132,7 @@ def _relevance(item: dict, ts: datetime, end: datetime, direction: int) -> float
 
     # Closer to the session close = more likely to be the driver.
     hours_before = (end - ts).total_seconds() / 3600
-    score += max(0.0, (24 - hours_before) / 24) * 0.4
+    score += min(1.0, max(0.0, (24 - hours_before) / 24)) * 0.4
 
     # A negative headline on an up day is probably not the explanation.
     sentiment = T.sentiment_of(f"{item.get('title', '')} {item.get('summary', '')}")

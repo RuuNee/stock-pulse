@@ -138,7 +138,9 @@ def _backfill_event_news(meta: dict, events: list[dict]) -> None:
         if not hist:
             continue
         hist = score.enrich(hist)
-        linked = link.attach_news([dict(event)], hist, meta["market"], max_items=5)
+        # Wider window: historical drivers are often reported the next day too.
+        linked = link.attach_news([dict(event)], hist, meta["market"],
+                                  max_items=5, days_before=2, days_after=2)
         if linked and linked[0].get("news"):
             event["news"] = linked[0]["news"]
             done += 1
