@@ -131,7 +131,9 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onMark
     if (showMarkers) {
       const firstDate = slice[0]?.[0] as string | undefined;
       const events = detail.events.filter(
-        (e) => (!firstDate || e.date >= firstDate) && (!s.beginner || e.severity >= 2),
+        (e) =>
+          (!firstDate || e.date >= firstDate) &&
+          (!s.beginner || e.severity >= 2 || e.news.length > 0),
       );
       const markers: SeriesMarker<Time>[] = events.map((e) => {
         const positive = e.changePct >= 0;

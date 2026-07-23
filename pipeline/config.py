@@ -190,8 +190,17 @@ FEEDS: dict[str, dict] = {
 
 # Per-ticker news templates. See md파일/01-데이터소스.md §3.
 YAHOO_TICKER_RSS = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
-GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
-GOOGLE_NEWS_DELAY_SEC = 1.5  # Google News 429s if hit too fast
+GOOGLE_NEWS_KR = "https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+GOOGLE_NEWS_US = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+GOOGLE_NEWS_RSS = GOOGLE_NEWS_KR  # back-compat alias
+GOOGLE_NEWS_DELAY_SEC = 1.2  # Google News 429s if hit too fast
+
+# ⭐ Historical news backfill for chart events (R5). We only collect *recent*
+# RSS, so events from months ago have no matched news on first run. For the top
+# newsless events per ticker, run one date-scoped Google News query each.
+EVENT_NEWS_BACKFILL = True
+EVENT_BACKFILL_MAX_PER_TICKER = 6   # cap queries: 60 tickers × 6 × 1.2s ≈ 7min
+EVENT_BACKFILL_MAX_AGE_DAYS = 200   # don't backfill ancient events
 
 USER_AGENT = "Mozilla/5.0 (compatible; StockPulse/1.0; +https://github.com/RuuNee/stock-pulse)"
 HTTP_TIMEOUT = 15

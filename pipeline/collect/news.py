@@ -14,13 +14,15 @@ from __future__ import annotations
 import calendar
 import socket
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from ..config import (
     FEEDS,
     GOOGLE_NEWS_DELAY_SEC,
+    GOOGLE_NEWS_KR,
     GOOGLE_NEWS_RSS,
+    GOOGLE_NEWS_US,
     HTTP_TIMEOUT,
     USER_AGENT,
     YAHOO_TICKER_RSS,
@@ -108,18 +110,48 @@ def fetch_market_feeds(markets: tuple[str, ...] = ("KR", "US")) -> list[dict]:
 
 
 def fetch_ticker_news(ticker: dict, *, limit: int = 25) -> list[dict]:
-    """News for a single ticker, used for chart-event matching."""
+    """Recent news for a single ticker, used for chart-event matching."""
     if ticker["market"] == "US":
         url = YAHOO_TICKER_RSS.format(ticker=ticker["code"])
         source_key = "yahoo_ticker"
         source = "Yahoo Finance"
     else:
-        query = quote(f'"{ticker["name"]}" 주가')
-        url = GOOGLE_NEWS_RSS.format(query=query)
+        url = GOOGLE_NEWS_KR.format(query=quote(f'"{ticker["name"]}" 주가'))
         source_key = "google_news"
         source = "Google News"
-        time.sleep(GOOGLE_NEWS_DELAY_SEC)  # Google News rate-limits aggressively
+        time.sleep(GOOGLE_NEWS_DELAY_SEC)
 
+    return _fetch_ticker_url(url, ticker, source=source, source_key=source_key, limit=limit)
+
+
+def fetch_event_news(ticker: dict, event_date: str, *, window: int = 2,
+                     limit: int = 6) -> list[dict]:
+    """Date-scoped Google News for one event day (historical backfill, R5).
+
+    Google News supports ``after:/before:`` operators, which lets us pull news
+    from a specific window months in the past — the only way to explain old
+    chart events, since our RSS feeds are recent-only.
+    """
+    day = datetime.strptime(event_date, "%Y-%m-%d").date()
+    after = (day - timedelta(days=window)).isoformat()
+    before = (day + timedelta(days=window + 1)).isoformat()
+
+    if ticker["market"] == "US":
+        name = ticker.get("nameEn") or ticker["name"]
+        q = f'"{name}" stock after:{after} before:{before}'
+        template = GOOGLE_NEWS_US
+    else:
+        q = f'"{ticker["name"]}" after:{after} before:{before}'
+        template = GOOGLE_NEWS_KR
+
+    time.sleep(GOOGLE_NEWS_DELAY_SEC)
+    return _fetch_ticker_url(template.format(query=quote(q)), ticker,
+                             source="Google News", source_key="google_news_hist",
+                             limit=limit)
+
+
+def _fetch_ticker_url(url: str, ticker: dict, *, source: str, source_key: str,
+                      limit: int) -> list[dict]:
     try:
         parsed = _parse(url)
         entries = (parsed.entries or [])[:limit]
@@ -134,12 +166,9 @@ def fetch_ticker_news(ticker: dict, *, limit: int = 25) -> list[dict]:
         if not item:
             continue
         # Google News wraps the real publisher name in entry.source.
-        publisher = None
         raw_source = entry.get("source")
-        if isinstance(raw_source, dict):
-            publisher = raw_source.get("title")
-        elif raw_source:
-            publisher = getattr(raw_source, "title", None)
+        publisher = raw_source.get("title") if isinstance(raw_source, dict) else \
+            getattr(raw_source, "title", None) if raw_source else None
         if publisher:
             item["source"] = T.clean_html(publisher)
 

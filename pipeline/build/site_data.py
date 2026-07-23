@@ -16,6 +16,9 @@ from ..analyze import events as events_mod
 from ..analyze import indicators, link, mood, score, summarize
 from ..config import (
     DATA_DIR,
+    EVENT_BACKFILL_MAX_AGE_DAYS,
+    EVENT_BACKFILL_MAX_PER_TICKER,
+    EVENT_NEWS_BACKFILL,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
     all_universe,
@@ -88,6 +91,7 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     combined = score.enrich(combined)
 
     events = link.attach_news(events, combined, meta["market"])
+    _backfill_event_news(meta, events)
     events = summarize.summarize_events(meta, events)
 
     return {
@@ -109,6 +113,37 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
         "recentNews": [_news_brief(n) for n in combined[:RECENT_NEWS_PER_TICKER]],
         "_spark": prices.spark(df, 30),
     }
+
+
+def _backfill_event_news(meta: dict, events: list[dict]) -> None:
+    """For the top newsless events, fetch date-scoped historical news (R5).
+
+    Bounded per ticker so a full sync stays under budget. Mutates events in
+    place, attaching up to 5 matched articles each.
+    """
+    if not EVENT_NEWS_BACKFILL:
+        return
+    from datetime import date, timedelta
+
+    cutoff = (date.today() - timedelta(days=EVENT_BACKFILL_MAX_AGE_DAYS)).isoformat()
+    candidates = [
+        e for e in events
+        if not e.get("news") and e["date"] >= cutoff
+    ]
+    candidates.sort(key=lambda e: (e["severity"], abs(e["changePct"])), reverse=True)
+
+    done = 0
+    for event in candidates[:EVENT_BACKFILL_MAX_PER_TICKER]:
+        hist = news_mod.fetch_event_news(meta, event["date"])
+        if not hist:
+            continue
+        hist = score.enrich(hist)
+        linked = link.attach_news([dict(event)], hist, meta["market"], max_items=5)
+        if linked and linked[0].get("news"):
+            event["news"] = linked[0]["news"]
+            done += 1
+    if done:
+        log.info(f"    {meta['code']}: backfilled news for {done} events")
 
 
 def _write_ticker(detail: dict) -> None:

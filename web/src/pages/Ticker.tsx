@@ -126,7 +126,7 @@ export default function Ticker() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {(s.beginner ? d.events.filter((e) => e.severity >= 2) : d.events).map((e) => (
+            {(s.beginner ? d.events.filter((e) => e.severity >= 2 || e.news.length > 0) : d.events).map((e) => (
               <EventCard
                 key={e.id}
                 e={e}
