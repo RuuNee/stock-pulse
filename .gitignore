@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.cache/
+
+# node / vite
+node_modules/
+web/dist/
+web/.vite/
+*.log
+
+# os
+.DS_Store
+Thumbs.db
+
+# keep data/ tracked — Actions commits generated JSON there
