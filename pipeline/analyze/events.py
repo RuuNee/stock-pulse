@@ -15,6 +15,7 @@ from ..config import (
     EVENT_ABS_PCT,
     EVENT_GAP_PCT,
     EVENT_LOOKBACK_DAYS,
+    EVENT_MAX_PER_TICKER,
     EVENT_SEVERITY_BANDS,
     EVENT_VOLUME_RATIO,
     EVENT_ZSCORE,
@@ -66,14 +67,14 @@ def detect(df: pd.DataFrame, code: str) -> list[dict]:
         })
 
     events.sort(key=lambda e: e["date"], reverse=True)
-    return events
+    return events[:EVENT_MAX_PER_TICKER]
 
 
 def _classify(ret: float, z: float, vol_ratio: float, gap: float) -> str | None:
     big_move = abs(ret) >= EVENT_ABS_PCT or z >= EVENT_ZSCORE
     if big_move:
         return "surge" if ret > 0 else "plunge"
-    if vol_ratio >= EVENT_VOLUME_RATIO and abs(ret) >= 1.0:
+    if vol_ratio >= EVENT_VOLUME_RATIO and abs(ret) >= 2.0:
         return "volumeSpike"
     if abs(gap) >= EVENT_GAP_PCT:
         return "gapUp" if gap > 0 else "gapDown"

@@ -185,9 +185,7 @@ FEEDS: dict[str, dict] = {
                       "market": "US", "weight": 0.75},
     "investing_com": {"name": "Investing.com", "url": "https://www.investing.com/rss/news_25.rss",
                       "market": "US", "weight": 0.7},
-    "nasdaq_markets": {"name": "Nasdaq",
-                       "url": "https://www.nasdaq.com/feed/rssoutbound?category=Markets",
-                       "market": "US", "weight": 0.7},
+    # nasdaq_markets 제거: 응답이 자주 타임아웃(20s)됨 — 2026-07-23 실측. 99-스펙변경이력 참고.
 }
 
 # Per-ticker news templates. See md파일/01-데이터소스.md §3.
@@ -204,12 +202,15 @@ HTTP_TIMEOUT = 15
 HISTORY_YEARS = 2          # how much OHLCV history to keep per ticker
 EVENT_LOOKBACK_DAYS = 400  # how far back to detect events
 
-EVENT_ZSCORE = 1.8         # |return| in std-devs of trailing 60d returns
-EVENT_ABS_PCT = 3.5        # or absolute % move (whichever triggers first)
-EVENT_VOLUME_RATIO = 2.5   # volume vs 20d average
-EVENT_GAP_PCT = 2.5        # open vs previous close
+# Tuned on real data (2026-07-23): loose thresholds flagged ~35% of trading
+# days. These keep only genuinely notable moves — roughly 10-25 per stock/yr.
+EVENT_ZSCORE = 2.4         # |return| in std-devs of trailing 60d returns
+EVENT_ABS_PCT = 6.0        # or absolute % move (whichever triggers first)
+EVENT_VOLUME_RATIO = 3.5   # volume vs 20d average (with a >=2% move)
+EVENT_GAP_PCT = 4.0        # open vs previous close
+EVENT_MAX_PER_TICKER = 40  # keep the most recent N (bounds UI + file size)
 
-EVENT_SEVERITY_BANDS = [(3.5, 1), (5.0, 2), (8.0, 3)]  # (|pct| >= x, severity)
+EVENT_SEVERITY_BANDS = [(6.0, 1), (9.0, 2), (13.0, 3)]  # (|pct| >= x, severity)
 
 NEWS_KEEP_DAYS = 3         # how much of the general feed to publish
 NEWS_MAX_ITEMS = 400

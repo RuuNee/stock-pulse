@@ -12,6 +12,7 @@ Two tiers:
 from __future__ import annotations
 
 import calendar
+import socket
 import time
 from datetime import datetime, timezone
 from urllib.parse import quote
@@ -20,6 +21,7 @@ from ..config import (
     FEEDS,
     GOOGLE_NEWS_DELAY_SEC,
     GOOGLE_NEWS_RSS,
+    HTTP_TIMEOUT,
     USER_AGENT,
     YAHOO_TICKER_RSS,
 )
@@ -27,8 +29,15 @@ from ..util import log, text as T
 
 
 def _parse(url: str):
+    # feedparser has no timeout parameter and relies on the global socket
+    # default — without this a single hung feed server blocks the whole run.
     import feedparser
-    return feedparser.parse(url, agent=USER_AGENT)
+    prev = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(HTTP_TIMEOUT)
+    try:
+        return feedparser.parse(url, agent=USER_AGENT)
+    finally:
+        socket.setdefaulttimeout(prev)
 
 
 def _published(entry) -> datetime | None:
@@ -144,10 +153,14 @@ def fetch_ticker_news(ticker: dict, *, limit: int = 25) -> list[dict]:
 
 
 def dedupe(items: list[dict]) -> list[dict]:
-    """Keep the highest-weight copy of each story."""
+    """Keep the highest-weight copy of each story.
+
+    ``_dedup`` may already have been stripped (e.g. items that passed through
+    score.enrich); recompute it from title+url in that case.
+    """
     best: dict[str, dict] = {}
     for item in items:
-        key = item["_dedup"]
+        key = item.get("_dedup") or T.dedup_key(item.get("title", ""), item.get("url", ""))
         current = best.get(key)
         if current is None:
             item["dupCount"] = 1
