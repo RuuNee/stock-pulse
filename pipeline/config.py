@@ -96,14 +96,6 @@ KR_UNIVERSE: list[tuple[str, str, str, list[str]]] = [
     ("357780", "솔브레인", "KOSDAQ", []),
     ("240810", "원익IPS", "KOSDAQ", []),
     ("086520", "에코프로", "KOSDAQ", []),
-    # --- 국내 ETF ---
-    ("069500", "KODEX 200", "KOSPI", ["코덱스200", "코덱스 200"]),
-    ("122630", "KODEX 레버리지", "KOSPI", ["코덱스 레버리지"]),
-    ("252670", "KODEX 200선물인버스2X", "KOSPI", ["곱버스", "코덱스 인버스"]),
-    ("360750", "TIGER 미국S&P500", "KOSPI", ["타이거 미국S&P500", "미국S&P500"]),
-    ("133690", "TIGER 미국나스닥100", "KOSPI", ["타이거 나스닥100", "미국나스닥100"]),
-    ("233740", "KODEX 코스닥150레버리지", "KOSDAQ", ["코스닥150 레버리지"]),
-    ("305720", "KODEX 2차전지산업", "KOSPI", ["2차전지 ETF"]),
 ]
 
 US_UNIVERSE: list[tuple[str, str, str, list[str]]] = [
@@ -160,17 +152,85 @@ US_UNIVERSE: list[tuple[str, str, str, list[str]]] = [
     ("ARM", "Arm Holdings", "NASDAQ", ["암홀딩스"]),
     ("MSTR", "MicroStrategy", "NASDAQ", ["마이크로스트래티지", "스트래티지"]),
     ("DELL", "Dell", "NYSE", ["델테크놀로지스"]),
-    # --- 미국 ETF ---
-    ("VOO", "Vanguard S&P 500 ETF", "NYSE", ["뱅가드 S&P500"]),
-    ("VTI", "Vanguard Total Market ETF", "NYSE", ["뱅가드 토탈마켓"]),
-    ("SOXX", "iShares Semiconductor ETF", "NASDAQ", ["반도체 ETF", "필라델피아 반도체"]),
-    ("SMH", "VanEck Semiconductor ETF", "NASDAQ", ["반도체 ETF"]),
-    ("ARKK", "ARK Innovation ETF", "NYSE", ["아크 이노베이션", "돈나무"]),
-    ("IWM", "iShares Russell 2000 ETF", "NYSE", ["러셀2000 ETF"]),
-    ("DIA", "SPDR Dow Jones ETF", "NYSE", ["다우 ETF"]),
-    ("SCHD", "Schwab US Dividend ETF", "NYSE", ["슈드", "배당 ETF"]),
-    ("TQQQ", "ProShares UltraPro QQQ", "NASDAQ", ["나스닥100 3배"]),
-    ("GLD", "SPDR Gold Shares", "NYSE", ["금 ETF"]),
+]
+
+# --------------------------------------------------------------------------
+# ETFs — tracked for price/chart/search only. Per-ticker news + event backfill
+# are skipped (a basket's moves aren't explained by single-company news), so
+# these are cheap to add in bulk. (code, name, "ETF", aliases)
+# --------------------------------------------------------------------------
+KR_ETF: list[tuple[str, str, str, list[str]]] = [
+    ("069500", "KODEX 200", "ETF", ["코덱스200", "코덱스 200"]),
+    ("102110", "TIGER 200", "ETF", ["타이거200"]),
+    ("148020", "RISE 200", "ETF", []),
+    ("278530", "KODEX 200TR", "ETF", []),
+    ("277630", "TIGER 코스피", "ETF", ["코스피 ETF"]),
+    ("229200", "KODEX 코스닥150", "ETF", ["코덱스 코스닥150"]),
+    ("122630", "KODEX 레버리지", "ETF", ["코덱스 레버리지"]),
+    ("114800", "KODEX 인버스", "ETF", ["코덱스 인버스"]),
+    ("252670", "KODEX 200선물인버스2X", "ETF", ["곱버스"]),
+    ("233740", "KODEX 코스닥150레버리지", "ETF", ["코스닥150 레버리지"]),
+    ("360750", "TIGER 미국S&P500", "ETF", ["타이거 미국S&P500", "미국S&P500"]),
+    ("379800", "KODEX 미국S&P500", "ETF", ["코덱스 미국S&P500"]),
+    ("360200", "ACE 미국S&P500", "ETF", ["에이스 미국S&P500"]),
+    ("133690", "TIGER 미국나스닥100", "ETF", ["타이거 나스닥100", "미국나스닥100"]),
+    ("379810", "KODEX 미국나스닥100", "ETF", ["코덱스 나스닥"]),
+    ("367380", "ACE 미국나스닥100", "ETF", []),
+    ("225040", "TIGER 미국S&P500레버리지(합성 H)", "ETF", ["미국S&P500 레버리지"]),
+    ("161510", "PLUS 고배당주", "ETF", ["아리랑 고배당주", "고배당 ETF"]),
+    ("279530", "KODEX 고배당주", "ETF", []),
+    ("211560", "TIGER 배당성장", "ETF", []),
+    ("325020", "KODEX 배당가치", "ETF", []),
+    ("458730", "TIGER 미국배당다우존스", "ETF", ["미국배당다우존스", "슈드 국내"]),
+    ("446720", "SOL 미국배당다우존스", "ETF", []),
+    ("441640", "KODEX 미국배당커버드콜액티브", "ETF", ["커버드콜"]),
+    ("441680", "TIGER 미국나스닥100커버드콜(합성)", "ETF", ["나스닥 커버드콜"]),
+    ("329200", "TIGER 리츠부동산인프라", "ETF", ["리츠 ETF"]),
+    ("091160", "KODEX 반도체", "ETF", ["반도체 ETF"]),
+    ("381180", "TIGER 미국필라델피아반도체나스닥", "ETF", ["미국반도체", "필라델피아반도체"]),
+    ("305540", "TIGER 2차전지테마", "ETF", ["2차전지 ETF"]),
+    ("462010", "TIGER 2차전지소재Fn", "ETF", []),
+    ("305720", "KODEX 2차전지산업", "ETF", []),
+    ("462330", "KODEX 2차전지산업레버리지", "ETF", []),
+    ("449450", "PLUS K방산", "ETF", ["케이방산", "방산 ETF"]),
+    ("463250", "TIGER K방산&우주", "ETF", ["방산 우주"]),
+    ("0080G0", "KODEX 방산TOP10", "ETF", ["방산TOP10"]),
+    ("421320", "PLUS 우주항공", "ETF", ["우주항공"]),
+    ("0183J0", "TIGER 미국우주테크", "ETF", ["미국우주"]),
+    ("434730", "HANARO 원자력iSelect", "ETF", ["원자력 ETF"]),
+    ("490090", "TIGER 미국AI빅테크10", "ETF", ["AI ETF"]),
+    ("472170", "TIGER 미국테크TOP10채권혼합", "ETF", ["미국 빅테크"]),
+    ("314250", "KODEX 미국빅테크10(H)", "ETF", ["빅테크"]),
+    ("456680", "TIGER 차이나전기차레버리지(합성)", "ETF", ["중국 전기차"]),
+    ("453870", "TIGER 인도니프티50", "ETF", ["인도 ETF", "니프티"]),
+    ("101280", "KODEX 일본TOPIX100", "ETF", ["일본 ETF"]),
+    ("471230", "KODEX 국고채10년액티브", "ETF", ["국고채"]),
+    ("305080", "TIGER 미국채10년선물", "ETF", ["미국채10년"]),
+    ("476760", "ACE 미국30년국채액티브", "ETF", ["미국30년국채", "미국장기채"]),
+    ("132030", "KODEX 골드선물(H)", "ETF", ["금 ETF", "골드"]),
+    ("411060", "ACE KRX금현물", "ETF", ["금현물"]),
+    ("261110", "TIGER 미국달러선물레버리지", "ETF", ["달러 ETF"]),
+    ("143860", "TIGER 헬스케어", "ETF", ["헬스케어 ETF"]),
+    ("091220", "TIGER 은행", "ETF", ["은행 ETF"]),
+    ("091180", "KODEX 자동차", "ETF", ["자동차 ETF"]),
+    ("228790", "TIGER 화장품", "ETF", ["화장품 ETF"]),
+    ("228810", "TIGER 미디어컨텐츠", "ETF", ["엔터 ETF"]),
+    ("244580", "KODEX 바이오", "ETF", ["바이오 ETF"]),
+    ("300950", "KODEX 게임산업", "ETF", ["게임 ETF"]),
+    ("494670", "TIGER 조선TOP10", "ETF", ["조선 ETF"]),
+]
+
+US_ETF: list[tuple[str, str, str, list[str]]] = [
+    ("VOO", "Vanguard S&P 500 ETF", "ETF", ["뱅가드 S&P500"]),
+    ("VTI", "Vanguard Total Market ETF", "ETF", ["뱅가드 토탈마켓"]),
+    ("SOXX", "iShares Semiconductor ETF", "ETF", ["반도체 ETF", "필라델피아 반도체"]),
+    ("SMH", "VanEck Semiconductor ETF", "ETF", ["반도체 ETF"]),
+    ("ARKK", "ARK Innovation ETF", "ETF", ["아크 이노베이션", "돈나무"]),
+    ("IWM", "iShares Russell 2000 ETF", "ETF", ["러셀2000 ETF"]),
+    ("DIA", "SPDR Dow Jones ETF", "ETF", ["다우 ETF"]),
+    ("SCHD", "Schwab US Dividend ETF", "ETF", ["슈드", "배당 ETF"]),
+    ("TQQQ", "ProShares UltraPro QQQ", "ETF", ["나스닥100 3배"]),
+    ("GLD", "SPDR Gold Shares", "ETF", ["금 ETF"]),
 ]
 
 # --------------------------------------------------------------------------
@@ -347,9 +407,17 @@ def universe(market: str) -> list[tuple[str, str, str, list[str]]]:
 
 
 def all_universe() -> list[dict]:
-    """Flattened universe with market tags, used by most modules."""
+    """Flattened universe with market tags, used by most modules.
+
+    ETFs carry ``isEtf: True`` so the per-ticker pipeline can skip the expensive
+    single-company news fetch + event backfill for them.
+    """
     out: list[dict] = []
-    for market, rows in (("KR", KR_UNIVERSE), ("US", US_UNIVERSE)):
+    groups = (
+        ("KR", KR_UNIVERSE, False), ("US", US_UNIVERSE, False),
+        ("KR", KR_ETF, True), ("US", US_ETF, True),
+    )
+    for market, rows, is_etf in groups:
         for code, name, exchange, aliases in rows:
             out.append({
                 "code": code,
@@ -358,5 +426,6 @@ def all_universe() -> list[dict]:
                 "exchange": exchange,
                 "aliases": aliases,
                 "currency": "KRW" if market == "KR" else "USD",
+                "isEtf": is_etf,
             })
     return out

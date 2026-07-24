@@ -83,15 +83,19 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
 
     events = events_mod.detect(df, meta["code"])
 
-    # Per-ticker news = ticker-specific feed + market news already tagged to it.
-    ticker_news = news_mod.fetch_ticker_news(meta)
+    # ETFs are baskets: single-company news doesn't explain their moves, so skip
+    # the expensive per-ticker Google News fetch + historical backfill. They keep
+    # price/chart/search; any market news tagged to them still shows.
+    is_etf = meta.get("isEtf", False)
     tagged_market = [n for n in market_news
                      if any(t["code"] == meta["code"] for t in n.get("tickers", []))]
+    ticker_news = [] if is_etf else news_mod.fetch_ticker_news(meta)
     combined = news_mod.dedupe(ticker_news + tagged_market)
     combined = score.enrich(combined)
 
     events = link.attach_news(events, combined, meta["market"])
-    _backfill_event_news(meta, events)
+    if not is_etf:
+        _backfill_event_news(meta, events)
     events = summarize.summarize_events(meta, events)
 
     return {
