@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useSettings } from "../lib/settings";
+import SearchButton from "./Search";
 
 const NAV = [
   { to: "/", label: "홈", icon: "🏠", end: true },
@@ -19,7 +20,10 @@ export default function Layout({ children }: { children: ReactNode }) {
         style={{ borderColor: "var(--border)", background: "var(--surface)" }}
       >
         <Brand />
-        <nav className="mt-4 flex flex-col gap-1">
+        <div className="mt-4">
+          <SearchButton />
+        </div>
+        <nav className="mt-3 flex flex-col gap-1">
           {NAV.map((n) => (
             <SideLink key={n.to} {...n} />
           ))}
@@ -38,6 +42,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         >
           <Brand />
           <div className="flex items-center gap-2">
+            <SearchButton compact />
             <Toggles compact />
           </div>
         </header>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -13,23 +13,41 @@ import {
 } from "lightweight-charts";
 import type { ChartEvent, TickerDetail } from "../lib/types";
 import { useSettings } from "../lib/settings";
+import { fmtPrice, fmtVolume } from "../lib/format";
+import ChangeBadge from "./ChangeBadge";
 
 interface Props {
   detail: TickerDetail;
   range: number; // trading days to show
   showMarkers: boolean;
   showMA: boolean;
-  onMarkerClick: (event: ChartEvent) => void;
+  onEventNews: (event: ChartEvent) => void;
+}
+
+// A single clicked bar's detail, shown in the overlay panel.
+interface BarSel {
+  date: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  pct: number | null;
+  event: ChartEvent | null;
 }
 
 function toTime(dateStr: string): UTCTimestamp {
   return (Date.parse(dateStr + "T00:00:00Z") / 1000) as UTCTimestamp;
 }
 
-export default function TickerChart({ detail, range, showMarkers, showMA, onMarkerClick }: Props) {
+export default function TickerChart({ detail, range, showMarkers, showMA, onEventNews }: Props) {
   const holder = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const s = useSettings();
+  const [sel, setSel] = useState<BarSel | null>(null);
+
+  // Clear the detail panel whenever the chart is rebuilt (range/mode change).
+  useEffect(() => setSel(null), [detail.code, range, s.beginner]);
 
   useEffect(() => {
     const el = holder.current;
@@ -76,10 +94,7 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onMark
       slice.map((r) => ({
         time: toTime(r[0] as string),
         value: r[5] as number,
-        color:
-          (r[4] as number) >= (r[1] as number)
-            ? `${upC}55`
-            : `${downC}55`,
+        color: (r[4] as number) >= (r[1] as number) ? `${upC}55` : `${downC}55`,
       })),
     );
 
@@ -127,7 +142,7 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onMark
       }
     }
 
-    // --- event markers ---
+    // --- event markers (visual hint only; click detail handled below) ---
     if (showMarkers) {
       const firstDate = slice[0]?.[0] as string | undefined;
       const events = detail.events.filter(
@@ -147,23 +162,37 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onMark
         };
       });
       createSeriesMarkers(priceSeries, markers);
-
-      chart.subscribeClick((param) => {
-        if (!param.time) return;
-        const clicked = (param.time as number) as UTCTimestamp;
-        // find the event nearest the clicked time
-        let best: ChartEvent | null = null;
-        let bestDelta = Infinity;
-        for (const e of events) {
-          const d = Math.abs(toTime(e.date) - clicked);
-          if (d < bestDelta) {
-            bestDelta = d;
-            best = e;
-          }
-        }
-        if (best && bestDelta <= 3 * 86400) onMarkerClick(best);
-      });
     }
+
+    // --- click a bar → show its OHLC detail (with a news button if that day
+    //     has a matched event). Replaces the old "click jumps to news". ---
+    chart.subscribeClick((param) => {
+      if (param.time == null) {
+        setSel(null);
+        return;
+      }
+      const t = param.time as number;
+      const i = slice.findIndex((r) => toTime(r[0] as string) === t);
+      if (i < 0) {
+        setSel(null);
+        return;
+      }
+      const r = slice[i];
+      const globalIdx = startIdx + i;
+      const prevClose = globalIdx > 0 ? (rows[globalIdx - 1][4] as number) : null;
+      const c = r[4] as number;
+      const date = r[0] as string;
+      setSel({
+        date,
+        o: r[1] as number,
+        h: r[2] as number,
+        l: r[3] as number,
+        c,
+        v: r[5] as number,
+        pct: prevClose ? ((c - prevClose) / prevClose) * 100 : null,
+        event: detail.events.find((e) => e.date === date) ?? null,
+      });
+    });
 
     chart.timeScale().fitContent();
 
@@ -174,5 +203,92 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onMark
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.code, range, showMarkers, showMA, s.beginner, s.theme, s.colorMode]);
 
-  return <div ref={holder} className="w-full" style={{ height: "min(52vh, 460px)", minHeight: 260 }} />;
+  return (
+    <div className="relative w-full">
+      <div ref={holder} className="w-full" style={{ height: "min(52vh, 460px)", minHeight: 260 }} />
+      {sel && (
+        <BarDetail
+          sel={sel}
+          currency={detail.currency}
+          onNews={() => {
+            if (sel.event) onEventNews(sel.event);
+            setSel(null);
+          }}
+          onClose={() => setSel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function BarDetail({
+  sel,
+  currency,
+  onNews,
+  onClose,
+}: {
+  sel: BarSel;
+  currency: string;
+  onNews: () => void;
+  onClose: () => void;
+}) {
+  const hasNews = !!sel.event && sel.event.news.length > 0;
+  return (
+    <div
+      className="absolute top-2 left-2 z-10 card p-2.5 text-xs"
+      style={{ width: 210, background: "var(--surface)", boxShadow: "0 4px 16px rgba(0,0,0,0.18)" }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="font-semibold" style={{ color: "var(--text)" }}>{sel.date}</span>
+        <ChangeBadge pct={sel.pct} size="sm" />
+        <button onClick={onClose} className="ml-auto px-1" style={{ color: "var(--muted)" }} aria-label="닫기">
+          ✕
+        </button>
+      </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 tabular-nums">
+        <Row label="시가" value={fmtPrice(sel.o, currency)} />
+        <Row label="고가" value={fmtPrice(sel.h, currency)} />
+        <Row label="저가" value={fmtPrice(sel.l, currency)} />
+        <Row label="종가" value={fmtPrice(sel.c, currency)} />
+      </dl>
+      <div className="mt-1.5 pt-1.5 border-t flex justify-between" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+        <span>거래량</span>
+        <span className="tabular-nums" style={{ color: "var(--text)" }}>{fmtVolume(sel.v)}</span>
+      </div>
+      {sel.event && (
+        <div className="mt-2">
+          <div className="text-xs mb-1.5 leading-snug" style={{ color: "var(--text)" }}>
+            📌 {sel.event.headline}
+          </div>
+          {hasNews ? (
+            <button
+              onClick={onNews}
+              className="w-full py-1.5 rounded-lg text-xs font-medium transition"
+              style={{ background: "var(--accent)", color: "#fff" }}
+            >
+              📰 이 날 뉴스 {sel.event.news.length}건 보기
+            </button>
+          ) : (
+            <button
+              onClick={onNews}
+              className="w-full py-1.5 rounded-lg text-xs font-medium border transition"
+              style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+            >
+              해설 보기
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <dt style={{ color: "var(--muted)" }}>{label}</dt>
+      <dd style={{ color: "var(--text)" }}>{value}</dd>
+    </div>
+  );
 }

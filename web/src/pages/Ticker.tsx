@@ -103,7 +103,7 @@ export default function Ticker() {
 
       {/* chart */}
       <div className="card p-2 pt-3">
-        <TickerChart detail={d} range={range} showMarkers={showMarkers} showMA={showMA} onMarkerClick={jumpToEvent} />
+        <TickerChart detail={d} range={range} showMarkers={showMarkers} showMA={showMA} onEventNews={jumpToEvent} />
       </div>
 
       {/* quote stats */}
@@ -118,7 +118,7 @@ export default function Ticker() {
       <section>
         <h2 className="text-base font-bold mb-1">📅 급등락일 & 그날의 뉴스</h2>
         <p className="text-xs mb-3" style={{ color: "var(--muted)" }}>
-          차트의 ▲▼ 마커를 누르거나 아래에서 바로 확인하세요. 왜 움직였는지 정리했습니다.
+          차트의 봉을 누르면 시·고·저·종가와 그날 뉴스 버튼이 뜹니다. 아래에서 바로 볼 수도 있어요.
         </p>
         {d.events.length === 0 ? (
           <div className="card p-6 text-center text-sm" style={{ color: "var(--muted)" }}>

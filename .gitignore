@@ -21,3 +21,4 @@ web/public/data/   # build artifact — copied from data/ by copy-data.mjs
 Thumbs.db
 
 # keep data/ tracked — Actions commits generated JSON there
+web/tsconfig.tsbuildinfo
