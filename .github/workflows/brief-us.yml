@@ -1,0 +1,46 @@
+name: brief-us
+
+# 미장 장전 브리핑 — 평일 21:30 KST (서머타임 개장 1시간 전).
+# 12:30 UTC (월~금) = 21:30 KST.
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: stock-pulse-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Build + send US brief
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: python -m pipeline.run brief --market US --send --rebuild
+
+      - name: Commit brief + refreshed data
+        run: |
+          git config user.name "stock-pulse-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "chore(brief): US $(date -u +'%Y-%m-%d')"
+            git push
+          fi

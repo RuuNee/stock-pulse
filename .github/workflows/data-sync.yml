@@ -1,0 +1,46 @@
+name: data-sync
+
+# Rebuild all site data after each market close and commit the JSON.
+# 07:30 UTC ≈ 16:30 KST (국장 마감 후), 21:30 UTC ≈ 06:30 KST (미장 마감 후).
+on:
+  schedule:
+    - cron: "30 7,21 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: stock-pulse-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Rebuild site data
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: python -m pipeline.run sync
+
+      - name: Commit data
+        run: |
+          git config user.name "stock-pulse-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "chore(data): sync $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
