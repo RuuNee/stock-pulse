@@ -30,6 +30,13 @@ def _cmd_sync(args) -> int:
     return 0
 
 
+def _cmd_pulse(args) -> int:
+    from .build import site_data
+    markets = _markets(args.market)
+    site_data.build_pulse(markets)
+    return 0
+
+
 def _cmd_brief(args) -> int:
     from .build import brief as brief_mod
     from .build import site_data
@@ -105,6 +112,10 @@ def main(argv=None) -> int:
     p_sync = sub.add_parser("sync", help="rebuild all site data")
     p_sync.add_argument("--market", help="KR | US | ALL (default ALL)")
     p_sync.set_defaults(func=_cmd_sync)
+
+    p_pulse = sub.add_parser("pulse", help="light intraday refresh (macro + news + mood)")
+    p_pulse.add_argument("--market", help="KR | US | ALL (default ALL)")
+    p_pulse.set_defaults(func=_cmd_pulse)
 
     p_brief = sub.add_parser("brief", help="build + optionally send the pre-market brief")
     p_brief.add_argument("--market", help="KR | US | ALL (default ALL)")

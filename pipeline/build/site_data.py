@@ -88,6 +88,53 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     }
 
 
+def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
+    """Lightweight intraday refresh — the "always-current economic snapshot".
+
+    Rebuilds only the cheap, fast-moving parts: macro indices (지수·환율·VIX·
+    유가·금), market mood, and the news feed. Skips the heavy per-ticker rebuild
+    (charts/events/AI), so it can run every couple of hours within the free
+    Actions budget. Sectors/movers are carried over from the last full sync.
+    """
+    started = now_utc()
+    log.step(f"Pulse (light) update for {markets}")
+
+    macro_indices = macro_mod.collect()
+    # Use the config universe (instant) rather than enrich() (slow listing
+    # fetch) — news tagging only needs code/name/aliases/market.
+    tickers_meta = [t for t in all_universe() if t["market"] in markets]
+    market_news = news_mod.fetch_market_feeds(markets)
+    market_news = link.tag_tickers(market_news, tickers_meta)
+    market_news = score.enrich(market_news)
+
+    prev = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
+    movers = prev.get("movers", {})
+    sectors = prev.get("sectors", {})
+    market_mood = {
+        m: mood.score_market(m, macro_indices, movers.get(m, {"up": [], "down": []}))
+        for m in markets
+    }
+
+    overview = {
+        "generatedAt": iso(started),
+        "indices": macro_indices,
+        "sectors": sectors,
+        "movers": movers,
+        "marketMood": market_mood,
+    }
+    io.write_json(DATA_DIR / "market" / "overview.json", overview)
+    io.write_json(DATA_DIR / "news" / "latest.json",
+                  {"generatedAt": iso(started), "items": market_news[:NEWS_MAX_ITEMS]})
+
+    manifest = io.read_json(DATA_DIR / "manifest.json", {}) or {}
+    manifest["generatedAt"] = iso(started)
+    manifest["generatedAtKst"] = now_kst().strftime("%Y-%m-%d %H:%M")
+    io.write_json(DATA_DIR / "manifest.json", manifest)
+
+    log.ok(f"pulse done · {len(macro_indices)} indices, {len(market_news)} news")
+    return {"overview": overview, "news": market_news}
+
+
 # Run-scoped translation cache: source string (en) → Korean.
 _TRANS: dict[str, str] = {}
 
