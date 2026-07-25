@@ -389,10 +389,10 @@ NEGATIVE_WORDS_EN = ["plunge", "slump", "miss", "drop", "fall", "downgrade", "we
 # --------------------------------------------------------------------------
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MAX_TOKENS = 2048
-GEMINI_DELAY_SEC = 4.0         # spacing between calls → stay under free-tier RPM
+GEMINI_DELAY_SEC = 7.0         # spacing between calls → stay under free-tier RPM (~10/min)
 
 LLM_ENABLED = True             # falls back to rules automatically without a key
-LLM_MAX_EVENTS_PER_RUN = 80    # GLOBAL cap on event summaries per run
+LLM_MAX_EVENTS_PER_RUN = 40    # GLOBAL cap on event summaries per run (leave quota for translation)
 LLM_RECENT_DAYS = 40           # only LLM-summarize events newer than this
 LLM_EVENT_BATCH = 6            # events per Gemini call
 

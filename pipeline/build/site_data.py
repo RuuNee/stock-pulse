@@ -33,15 +33,19 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     started = now_utc()
     log.step(f"Building site data for {markets}")
     llm.reset()
+    _TRANS.clear()
 
     log.step("1/6 · universe metadata")
     tickers_meta = [t for t in universe.enrich() if t["market"] in markets]
 
-    log.step("2/6 · market news")
+    log.step("2/6 · market news + feed translation")
     market_news = news_mod.fetch_market_feeds(markets)
     market_news = link.tag_tickers(market_news, tickers_meta)
     market_news = score.enrich(market_news)
     log.ok(f"news: {len(market_news)} items after scoring")
+    # Translate the feed FIRST — it's the main foreign-news surface, so it must
+    # get LLM quota before per-ticker event summaries can spend it.
+    _translate_feed(market_news)
 
     log.step("3/6 · per-ticker data + events")
     details: list[dict] = []
@@ -51,8 +55,8 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
         if detail is not None:
             details.append(detail)
 
-    log.step("4/6 · foreign-news translation")
-    _translate_foreign(market_news, details)
+    log.step("4/6 · translate ticker news")
+    _translate_ticker_news(details)
 
     log.step("5/6 · writing tickers")
     index_items: list[dict] = []
@@ -81,19 +85,54 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     }
 
 
-def _translate_foreign(market_news: list[dict], details: list[dict]) -> None:
-    """Auto-translate US/GLOBAL news titles + summaries to Korean.
+# Run-scoped translation cache: source string (en) → Korean.
+_TRANS: dict[str, str] = {}
 
-    One global, de-duplicated pass so the same article is never translated
-    twice. Feed items come first so the /news page and brief are prioritised
-    when the per-run cap is hit. Adds ``titleKo`` / ``summaryKo`` in place.
-    """
+
+def _apply_trans(n: dict) -> None:
+    t = _TRANS.get(n.get("title"))
+    if t:
+        n["titleKo"] = t
+    s = _TRANS.get(n.get("summary"))
+    if s:
+        n["summaryKo"] = s
+
+
+def _translate(strings: list[str]) -> None:
+    """Translate uncached strings (up to the per-run cap) into _TRANS."""
+    room = TRANSLATE_MAX_ITEMS - len(_TRANS)
+    todo, seen = [], set()
+    for s in strings:
+        if s and s not in _TRANS and s not in seen:
+            seen.add(s)
+            todo.append(s)
+    todo = todo[:max(0, room)]
+    if not todo:
+        return
+    for en, ko in zip(todo, llm.translate(todo)):
+        if ko and ko != en:
+            _TRANS[en] = ko
+
+
+def _translate_feed(market_news: list[dict]) -> None:
+    """Priority pass: translate the US/GLOBAL news feed (main foreign surface)."""
     if not (TRANSLATE_FOREIGN and llm.available()):
         return
-
     feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
+    texts: list[str] = []
+    for n in feed:
+        texts.append(n.get("title"))
+        texts.append(n.get("summary"))
+    _translate([t for t in texts if t])
+    for n in feed:
+        _apply_trans(n)
+    log.ok(f"translated feed: {len(_TRANS)} strings cached")
 
-    def ticker_foreign(d: dict):
+
+def _translate_ticker_news(details: list[dict]) -> None:
+    """Second pass: US tickers' recent + event news. Reuses the feed cache for
+    free; translates the rest with whatever quota/cap remains."""
+    def foreign(d: dict):
         if d["market"] != "US":
             return []
         out = list(d.get("recentNews", []))
@@ -101,44 +140,13 @@ def _translate_foreign(market_news: list[dict], details: list[dict]) -> None:
             out.extend(e.get("news", []))
         return out
 
-    # Ordered unique strings: feed titles+summaries first, then ticker news.
-    ordered: list[str] = []
-    seen: set[str] = set()
-
-    def add(s: str | None):
-        if s and s not in seen:
-            seen.add(s)
-            ordered.append(s)
-
-    for n in feed:
-        add(n.get("title"))
-        add(n.get("summary"))
+    if TRANSLATE_FOREIGN and llm.available():
+        titles = [n.get("title") for d in details for n in foreign(d)]
+        _translate([t for t in titles if t])
+    # Apply cache (feed + newly translated) to every ticker news item.
     for d in details:
-        for n in ticker_foreign(d):
-            add(n.get("title"))
-
-    targets = ordered[:TRANSLATE_MAX_ITEMS]
-    if not targets:
-        return
-    ko = llm.translate(targets)
-    tmap = {en: k for en, k in zip(targets, ko) if k and k != en}
-    if not tmap:
-        return
-
-    def apply(n: dict):
-        t = tmap.get(n.get("title"))
-        if t:
-            n["titleKo"] = t
-        s = tmap.get(n.get("summary"))
-        if s:
-            n["summaryKo"] = s
-
-    for n in feed:
-        apply(n)
-    for d in details:
-        for n in ticker_foreign(d):
-            apply(n)
-    log.ok(f"translated {len(tmap)} foreign strings")
+        for n in foreign(d):
+            _apply_trans(n)
 
 
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
