@@ -21,8 +21,10 @@ from ..config import (
     EVENT_NEWS_BACKFILL,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
+    TRANSLATE_FEED_TOP,
     TRANSLATE_FOREIGN,
     TRANSLATE_MAX_ITEMS,
+    TRANSLATE_TICKER_NEWS,
     all_universe,
 )
 from ..util import io, log
@@ -115,23 +117,26 @@ def _translate(strings: list[str]) -> None:
 
 
 def _translate_feed(market_news: list[dict]) -> None:
-    """Priority pass: translate the US/GLOBAL news feed (main foreign surface)."""
+    """Priority pass: translate the top-importance US/GLOBAL feed items. Bounded
+    to TRANSLATE_FEED_TOP so it fits the free-tier daily budget."""
     if not (TRANSLATE_FOREIGN and llm.available()):
         return
     feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
+    feed.sort(key=lambda n: n.get("importance", 0), reverse=True)
+    top = feed[:TRANSLATE_FEED_TOP]
     texts: list[str] = []
-    for n in feed:
+    for n in top:
         texts.append(n.get("title"))
         texts.append(n.get("summary"))
     _translate([t for t in texts if t])
-    for n in feed:
+    for n in feed:  # apply to the whole feed (cache hits only where translated)
         _apply_trans(n)
-    log.ok(f"translated feed: {len(_TRANS)} strings cached")
+    log.ok(f"translated feed top-{len(top)}: {len(_TRANS)} strings cached")
 
 
 def _translate_ticker_news(details: list[dict]) -> None:
-    """Second pass: US tickers' recent + event news. Reuses the feed cache for
-    free; translates the rest with whatever quota/cap remains."""
+    """US tickers' recent + event news. Reuses the feed cache for free; only
+    spends new calls when TRANSLATE_TICKER_NEWS is on."""
     def foreign(d: dict):
         if d["market"] != "US":
             return []
@@ -140,10 +145,9 @@ def _translate_ticker_news(details: list[dict]) -> None:
             out.extend(e.get("news", []))
         return out
 
-    if TRANSLATE_FOREIGN and llm.available():
+    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available():
         titles = [n.get("title") for d in details for n in foreign(d)]
         _translate([t for t in titles if t])
-    # Apply cache (feed + newly translated) to every ticker news item.
     for d in details:
         for n in foreign(d):
             _apply_trans(n)
