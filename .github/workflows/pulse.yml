@@ -1,0 +1,46 @@
+name: pulse
+
+# Light intraday refresh: macro indices (지수·환율·VIX·유가·금) + market mood +
+# news feed, so the homepage economic snapshot stays current between the
+# twice-daily full data-syncs. ~2 min/run. Skips the heavy per-ticker rebuild.
+on:
+  schedule:
+    - cron: "0 */2 * * *"   # every 2 hours
+  workflow_dispatch:
+
+concurrency:
+  group: stock-pulse-data   # share the sync group so a pulse never overlaps a full sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pulse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Pulse update
+        run: python -m pipeline.run pulse
+
+      - name: Commit data
+        run: |
+          git config user.name "stock-pulse-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "chore(data): pulse $(date -u +'%Y-%m-%d %H:%M UTC')"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break || sleep 5
+            done
+          fi
