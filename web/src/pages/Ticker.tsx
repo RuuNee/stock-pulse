@@ -196,7 +196,7 @@ function EventCard({
           <div className="flex flex-col gap-1">
             {e.news.map((n, i) => (
               <a key={i} href={n.url} target="_blank" rel="noopener noreferrer" className="text-sm truncate hover:underline">
-                · {n.title} <span style={{ color: "var(--muted)" }}>({n.source})</span>
+                · {n.titleKo || n.title} <span style={{ color: "var(--muted)" }}>({n.source})</span>
               </a>
             ))}
           </div>

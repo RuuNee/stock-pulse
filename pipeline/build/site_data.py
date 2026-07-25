@@ -13,7 +13,7 @@ from ..collect import macro as macro_mod
 from ..collect import news as news_mod
 from ..collect import prices, universe
 from ..analyze import events as events_mod
-from ..analyze import indicators, link, mood, score, summarize
+from ..analyze import indicators, link, llm, mood, score, summarize
 from ..config import (
     DATA_DIR,
     EVENT_BACKFILL_MAX_AGE_DAYS,
@@ -21,6 +21,8 @@ from ..config import (
     EVENT_NEWS_BACKFILL,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
+    TRANSLATE_FOREIGN,
+    TRANSLATE_MAX_ITEMS,
     all_universe,
 )
 from ..util import io, log
@@ -30,31 +32,37 @@ from ..util.dates import iso, next_session_date, now_kst, now_utc
 def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     started = now_utc()
     log.step(f"Building site data for {markets}")
+    llm.reset()
 
-    log.step("1/5 · universe metadata")
+    log.step("1/6 · universe metadata")
     tickers_meta = [t for t in universe.enrich() if t["market"] in markets]
 
-    log.step("2/5 · market news")
+    log.step("2/6 · market news")
     market_news = news_mod.fetch_market_feeds(markets)
     market_news = link.tag_tickers(market_news, tickers_meta)
     market_news = score.enrich(market_news)
     log.ok(f"news: {len(market_news)} items after scoring")
 
-    log.step("3/5 · per-ticker data + events")
-    index_items: list[dict] = []
+    log.step("3/6 · per-ticker data + events")
+    details: list[dict] = []
     for i, meta in enumerate(tickers_meta, 1):
         log.info(f"[{i}/{len(tickers_meta)}] {meta['market']} {meta['code']} {meta['name']}")
         detail = _build_ticker(meta, market_news)
-        if detail is None:
-            continue
+        if detail is not None:
+            details.append(detail)
+
+    log.step("4/6 · foreign-news translation")
+    _translate_foreign(market_news, details)
+
+    log.step("5/6 · writing tickers")
+    index_items: list[dict] = []
+    for detail in details:
         _write_ticker(detail)
         index_items.append(_index_entry(detail))
 
-    log.step("4/5 · macro + market overview")
+    log.step("6/6 · macro + overview + shared files")
     macro_indices = macro_mod.collect()
     overview = _build_overview(macro_indices, index_items, market_news, markets)
-
-    log.step("5/5 · writing shared files")
     io.write_json(DATA_DIR / "tickers" / "index.json",
                   {"generatedAt": iso(started), "items": index_items})
     io.write_json(DATA_DIR / "market" / "overview.json", overview)
@@ -64,13 +72,73 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     manifest = _manifest(started, index_items, market_news, markets)
     io.write_json(DATA_DIR / "manifest.json", manifest)
 
-    log.ok(f"done · {len(index_items)} tickers, {len(market_news)} news")
+    log.ok(f"done · {len(index_items)} tickers, {len(market_news)} news · {llm.stats()}")
     return {
         "tickers": index_items,
         "overview": overview,
         "news": market_news,
         "manifest": manifest,
     }
+
+
+def _translate_foreign(market_news: list[dict], details: list[dict]) -> None:
+    """Auto-translate US/GLOBAL news titles + summaries to Korean.
+
+    One global, de-duplicated pass so the same article is never translated
+    twice. Feed items come first so the /news page and brief are prioritised
+    when the per-run cap is hit. Adds ``titleKo`` / ``summaryKo`` in place.
+    """
+    if not (TRANSLATE_FOREIGN and llm.available()):
+        return
+
+    feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
+
+    def ticker_foreign(d: dict):
+        if d["market"] != "US":
+            return []
+        out = list(d.get("recentNews", []))
+        for e in d.get("events", []):
+            out.extend(e.get("news", []))
+        return out
+
+    # Ordered unique strings: feed titles+summaries first, then ticker news.
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(s: str | None):
+        if s and s not in seen:
+            seen.add(s)
+            ordered.append(s)
+
+    for n in feed:
+        add(n.get("title"))
+        add(n.get("summary"))
+    for d in details:
+        for n in ticker_foreign(d):
+            add(n.get("title"))
+
+    targets = ordered[:TRANSLATE_MAX_ITEMS]
+    if not targets:
+        return
+    ko = llm.translate(targets)
+    tmap = {en: k for en, k in zip(targets, ko) if k and k != en}
+    if not tmap:
+        return
+
+    def apply(n: dict):
+        t = tmap.get(n.get("title"))
+        if t:
+            n["titleKo"] = t
+        s = tmap.get(n.get("summary"))
+        if s:
+            n["summaryKo"] = s
+
+    for n in feed:
+        apply(n)
+    for d in details:
+        for n in ticker_foreign(d):
+            apply(n)
+    log.ok(f"translated {len(tmap)} foreign strings")
 
 
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:

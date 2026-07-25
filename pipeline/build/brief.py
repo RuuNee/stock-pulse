@@ -8,23 +8,14 @@ rule-composed otherwise.
 
 from __future__ import annotations
 
-from ..config import LLM_MODEL, LLM_MAX_TOKENS, SITE_URL, anthropic_key
-from ..util import io, log
+from ..analyze import llm
+from ..config import SITE_URL
+from ..util import io
 from ..util import text as T
 from ..util.dates import iso, next_session_date, now_utc
 from ..config import DATA_DIR
 
 _DISCLAIMER = "본 브리핑은 공개된 뉴스를 정리한 정보이며 투자 권유가 아닙니다."
-
-_THREE_LINE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "headline": {"type": "string"},
-        "threeLines": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["headline", "threeLines"],
-    "additionalProperties": False,
-}
 
 
 def build_brief(market: str, site: dict) -> dict:
@@ -77,6 +68,7 @@ def _snapshot(market: str, indices: list[dict]) -> list[dict]:
 def _top_news(n: dict) -> dict:
     return {
         "title": n["title"],
+        "titleKo": n.get("titleKo"),
         "url": n["url"],
         "source": n.get("source"),
         "why": _why(n),
@@ -129,59 +121,13 @@ def _latest_event_note(code: str, market: str) -> str | None:
 
 def _summary(market, snapshot, top_news, mood):
     label = "국장" if market == "KR" else "미장"
-    client = _client()
-    if client:
-        result = _llm_summary(client, label, snapshot, top_news, mood)
-        if result:
-            return result
-    return _rule_summary(label, snapshot, top_news, mood)
-
-
-def _client():
-    key = anthropic_key()
-    if not key:
-        return None
-    try:
-        import anthropic
-        return anthropic.Anthropic(api_key=key)
-    except Exception:
-        return None
-
-
-def _llm_summary(client, label, snapshot, top_news, mood):
     snap = "\n".join(f"- {s['name']}: {s['value']} ({s['changePct']:+.2f}%)"
                      for s in snapshot if s.get("changePct") is not None)
     heads = "\n".join(f"- {n['title']}" for n in top_news[:6])
-    prompt = (
-        f"{label} 개장 전 브리핑입니다. 시장 분위기: {mood.get('label', '중립')}.\n\n"
-        f"간밤/전일 지표:\n{snap}\n\n오늘 주요 뉴스:\n{heads}\n\n"
-        "초보 투자자가 오늘 시장을 이해하도록 headline 1개와 3줄 요약을 만들어 주세요.\n"
-        "- headline: 오늘의 핵심을 한 문장으로.\n"
-        "- threeLines: 각 항목 한 문장, 존댓말, 쉬운 말. 투자 권유 금지."
-    )
-    try:
-        resp = client.messages.create(
-            model=LLM_MODEL,
-            max_tokens=LLM_MAX_TOKENS,
-            system="당신은 주식 초보자를 위한 한국어 시장 브리핑 작성자입니다. 사실만 전달하고 투자 권유는 하지 않습니다.",
-            messages=[{"role": "user", "content": prompt}],
-            output_config={"format": {"type": "json_schema", "schema": _THREE_LINE_SCHEMA}},
-        )
-    except Exception as exc:
-        log.warn(f"brief llm failed ({label}): {exc}")
-        return None
-    text = next((b.text for b in resp.content if b.type == "text"), None)
-    if not text:
-        return None
-    import json
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    lines = [str(x).strip() for x in (data.get("threeLines") or [])][:3]
-    if not lines:
-        return None
-    return str(data.get("headline", "")).strip(), lines
+    result = llm.brief_summary(label, snap, heads, mood.get("label", "중립"))
+    if result:
+        return result
+    return _rule_summary(label, snapshot, top_news, mood)
 
 
 def _rule_summary(label, snapshot, top_news, mood):

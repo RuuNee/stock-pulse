@@ -34,10 +34,17 @@ export default function NewsCard({ item, why }: { item: NewsItem; why?: string }
           {important && <span style={{ color: "var(--up)" }}>★ 중요</span>}
         </div>
 
-        <div className="font-semibold leading-snug">{item.title}</div>
-        {item.summary && (
+        <div className="font-semibold leading-snug">
+          {item.titleKo || item.title}
+          {item.titleKo && (
+            <span className="ml-1.5 text-[10px] align-middle" style={{ color: "var(--muted)" }} title={item.title}>
+              🌐 번역
+            </span>
+          )}
+        </div>
+        {(item.summaryKo || item.summary) && (
           <div className="mt-1 text-sm line-clamp-2" style={{ color: "var(--muted)" }}>
-            {item.summary}
+            {item.summaryKo || item.summary}
           </div>
         )}
       </a>

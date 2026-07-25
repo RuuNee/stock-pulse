@@ -1,5 +1,5 @@
 finance-datareader>=0.9.96
 feedparser>=6.0.11
 pandas>=2.0
-anthropic>=0.116.0
+requests>=2.31
 python-dotenv>=1.0.0

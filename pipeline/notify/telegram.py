@@ -63,7 +63,7 @@ def render(brief: dict) -> str:
         L.append("\n━━━━━━━━━━━━━━")
         L.append("<b>📰 주요 뉴스</b>")
         for i, n in enumerate(news, 1):
-            title = _e(n["title"])
+            title = _e(n.get("titleKo") or n["title"])
             link = f'<a href="{_e(n["url"])}">{title}</a>' if n.get("url") else title
             L.append(f"\n{i}. {link}")
             if n.get("why"):

@@ -78,7 +78,7 @@ function BriefBody({ brief }: { brief: BriefT }) {
             {brief.topNews.map((n, i) => (
               <div key={i}>
                 <a href={n.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-sm hover:underline">
-                  {i + 1}. {n.title}
+                  {i + 1}. {n.titleKo || n.title}
                 </a>
                 {n.why && <div className="mt-1 text-sm rounded-lg px-2.5 py-1.5" style={{ background: "var(--surface-2)" }}>💡 {n.why}</div>}
                 <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>

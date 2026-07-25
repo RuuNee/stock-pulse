@@ -57,6 +57,7 @@ export interface Overview {
 
 export interface TickerNews {
   title: string;
+  titleKo?: string;
   url: string;
   source?: string;
   publishedAt?: string;
@@ -104,7 +105,9 @@ export interface Quote {
 export interface NewsItem {
   id: string;
   title: string;
+  titleKo?: string;
   summary?: string;
+  summaryKo?: string;
   url: string;
   source?: string;
   market: Market | "GLOBAL";
@@ -159,6 +162,7 @@ export interface Brief {
   marketSnapshot: { name: string; value: number | null; changePct: number | null; unit?: string }[];
   topNews: {
     title: string;
+    titleKo?: string;
     url: string;
     source?: string;
     why?: string;

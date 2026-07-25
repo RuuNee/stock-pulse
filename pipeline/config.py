@@ -382,16 +382,27 @@ POSITIVE_WORDS_EN = ["surge", "rally", "beat", "jump", "gain", "record high", "u
 NEGATIVE_WORDS_EN = ["plunge", "slump", "miss", "drop", "fall", "downgrade", "weak", "cut", "slide", "tumble"]
 
 # --------------------------------------------------------------------------
-# LLM
+# LLM — Google Gemini (free tier). Set GEMINI_API_KEY to enable; without it the
+# pipeline falls back to rule-based summaries and skips translation.
+# Free-tier limits are per-minute/per-day, so the LLM budget below is GLOBAL
+# per run (not per ticker) and calls are batched + throttled.
 # --------------------------------------------------------------------------
-LLM_MODEL = "claude-haiku-4-5-20251001"
-LLM_MAX_EVENTS_PER_RUN = 40   # cost guard — raise for richer coverage
-LLM_MAX_TOKENS = 900
-LLM_ENABLED = True            # falls back to rules automatically without a key
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MAX_TOKENS = 2048
+GEMINI_DELAY_SEC = 4.0         # spacing between calls → stay under free-tier RPM
+
+LLM_ENABLED = True             # falls back to rules automatically without a key
+LLM_MAX_EVENTS_PER_RUN = 80    # GLOBAL cap on event summaries per run
+LLM_RECENT_DAYS = 40           # only LLM-summarize events newer than this
+LLM_EVENT_BATCH = 6            # events per Gemini call
+
+TRANSLATE_FOREIGN = True       # auto-translate US/GLOBAL news titles to Korean
+TRANSLATE_BATCH = 15           # news items per translation call
+TRANSLATE_MAX_ITEMS = 400      # cap translated strings per run (cost guard)
 
 
-def anthropic_key() -> str | None:
-    return os.getenv("ANTHROPIC_API_KEY") or None
+def gemini_key() -> str | None:
+    return os.getenv("GEMINI_API_KEY") or None
 
 
 def telegram_token() -> str | None:
