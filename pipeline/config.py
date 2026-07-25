@@ -392,15 +392,15 @@ GEMINI_MAX_TOKENS = 2048
 GEMINI_DELAY_SEC = 7.0         # spacing between calls → stay under free-tier RPM (~10/min)
 
 LLM_ENABLED = True             # falls back to rules automatically without a key
-LLM_MAX_EVENTS_PER_RUN = 18    # GLOBAL cap on event summaries per run (free-tier budget)
-LLM_RECENT_DAYS = 40           # only LLM-summarize events newer than this
+LLM_MAX_EVENTS_PER_RUN = 60    # GLOBAL cap on AI event summaries per run
+LLM_RECENT_DAYS = 60           # only AI-summarize events newer than this
 LLM_EVENT_BATCH = 6            # events per Gemini call
 
-# Free-tier friendly: translate only the top-importance foreign news each run
-# (the rest stays English), and translate ticker news from the cache only —
-# no extra calls. Over daily runs the important news is reliably in Korean.
-TRANSLATE_FOREIGN = True       # auto-translate US/GLOBAL news to Korean
-TRANSLATE_FEED_TOP = 20        # translate only the top-N feed items (leave quota for summaries)
+# Translation is OFF by default — the free Gemini quota is reserved for AI event
+# analysis (confidence + cause). Flip TRANSLATE_FOREIGN back on to auto-translate
+# foreign news (it will then compete with summaries for quota).
+TRANSLATE_FOREIGN = False      # auto-translate US/GLOBAL news to Korean
+TRANSLATE_FEED_TOP = 20        # translate only the top-N feed items when enabled
 TRANSLATE_TICKER_NEWS = False  # translate ticker news via new calls? (cache reuse always on)
 TRANSLATE_BATCH = 15           # strings per translation call
 TRANSLATE_MAX_ITEMS = 200      # hard cap on translated strings per run

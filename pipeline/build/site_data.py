@@ -57,8 +57,9 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
         if detail is not None:
             details.append(detail)
 
-    log.step("4/6 · translate ticker news")
-    _translate_ticker_news(details)
+    log.step("4/6 · AI event analysis (top events, global)")
+    summarize.enhance_globally(details)
+    _translate_ticker_news(details)   # no-op unless TRANSLATE_FOREIGN is on
 
     log.step("5/6 · writing tickers")
     index_items: list[dict] = []

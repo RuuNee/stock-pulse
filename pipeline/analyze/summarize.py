@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from ..config import LLM_RECENT_DAYS
+from ..config import LLM_MAX_EVENTS_PER_RUN, LLM_RECENT_DAYS
 from ..util import log
 from ..util import text as T
 from . import llm
@@ -28,49 +28,64 @@ def _is_recent(event: dict) -> bool:
 
 
 def summarize_events(ticker: dict, events: list[dict]) -> list[dict]:
-    """Populate each event with headline/explain/sentiment/confidence.
+    """Rule summaries for every event. AI upgrades the globally most important
+    ones later via :func:`enhance_globally` (free-tier quota is scarce, so it is
+    spent on the top events across the whole universe, not per ticker)."""
+    for event in events:
+        _rule_explain(ticker, event)
+    return events
 
-    Recent events with news are sent to Gemini (subject to the global budget);
-    the rest get a rule summary.
-    """
-    # Candidates for the LLM: recent + has news, most severe first.
-    candidates = sorted(
-        [e for e in events if e.get("news") and _is_recent(e)],
-        key=lambda e: (e["severity"], len(e["news"])),
+
+def enhance_globally(details: list[dict]) -> None:
+    """Second pass: pick the most significant recent events across ALL tickers
+    and have Gemini write the cause + confidence for them. Mutates in place,
+    upgrading those events from rule → llm."""
+    if not llm.available():
+        return
+
+    # Collect candidates (recent + has news) with their owning ticker.
+    cands: list[tuple[dict, dict]] = []
+    index: dict[str, dict] = {}
+    for d in details:
+        for e in d["events"]:
+            if e.get("news") and _is_recent(e):
+                cands.append((d, e))
+                index[e["id"]] = e
+
+    # Global ranking: severity, then size of move, then breadth of coverage.
+    cands.sort(
+        key=lambda de: (de[1]["severity"], abs(de[1]["changePct"]), len(de[1]["news"]), de[1]["date"]),
         reverse=True,
     )
+    top = cands[:LLM_MAX_EVENTS_PER_RUN]
+    if not top:
+        return
+
     items = [
         {
-            "id": e["id"], "name": ticker["name"], "code": ticker["code"],
-            "market": ticker["market"], "date": e["date"], "changePct": e["changePct"],
-            "volumeRatio": e.get("volumeRatio"),
+            "id": e["id"], "name": d["name"], "code": d["code"], "market": d["market"],
+            "date": e["date"], "changePct": e["changePct"], "volumeRatio": e.get("volumeRatio"),
             "news": [n["title"] for n in e["news"][:5]],
         }
-        for e in candidates
+        for d, e in top
     ]
-    results = llm.explain_events(items) if items else {}
+    results = llm.explain_events(items)
 
-    llm_done = rule_done = 0
-    for event in events:
-        got = results.get(event["id"])
-        if got:
-            event.update({
-                "headline": T.truncate(str(got.get("headline", "")), 30) or label_for(event),
-                "explain": str(got.get("explain", "")).strip(),
-                "sentiment": got.get("sentiment", "neutral"),
-                "confidence": got.get("confidence", "medium"),
-                "tags": [str(t) for t in (got.get("tags") or [])][:5],
-                "source": "llm",
-            })
-            if event["explain"]:
-                llm_done += 1
-                continue
-        _rule_explain(ticker, event)
-        rule_done += 1
-
-    if events and llm_done:
-        log.info(f"  {ticker['code']}: {llm_done} llm / {rule_done} rule summaries")
-    return events
+    done = 0
+    for eid, got in results.items():
+        e = index.get(eid)
+        if not (e and got and str(got.get("explain", "")).strip()):
+            continue
+        e.update({
+            "headline": T.truncate(str(got.get("headline", "")), 30) or e.get("headline"),
+            "explain": str(got.get("explain", "")).strip(),
+            "sentiment": got.get("sentiment", e.get("sentiment", "neutral")),
+            "confidence": got.get("confidence", "medium"),
+            "tags": [str(t) for t in (got.get("tags") or [])][:5],
+            "source": "llm",
+        })
+        done += 1
+    log.ok(f"AI-analyzed {done}/{len(top)} top events ({llm.stats()})")
 
 
 def _rule_explain(ticker: dict, event: dict) -> None:
