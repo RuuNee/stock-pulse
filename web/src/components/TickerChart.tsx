@@ -150,6 +150,10 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
           (!firstDate || e.date >= firstDate) &&
           (!s.beginner || e.severity >= 2 || e.news.length > 0),
       );
+      // Shape-only markers (no text): text labels overlap when events are
+      // dense and — because lightweight-charts hides colliding labels — make
+      // markers vanish when zoomed in. Meaning comes from the legend below and
+      // the click-to-detail panel. Size scales gently with severity.
       const markers: SeriesMarker<Time>[] = events.map((e) => {
         const positive = e.changePct >= 0;
         return {
@@ -157,8 +161,7 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
           position: positive ? "aboveBar" : "belowBar",
           color: e.type === "volumeSpike" ? "#f59e0b" : positive ? upC : downC,
           shape: e.type === "volumeSpike" ? "circle" : positive ? "arrowUp" : "arrowDown",
-          size: e.severity,
-          text: e.headline.length > 12 ? e.headline.slice(0, 12) + "…" : e.headline,
+          size: e.severity >= 3 ? 2 : 1,
         };
       });
       createSeriesMarkers(priceSeries, markers);
@@ -203,6 +206,9 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.code, range, showMarkers, showMA, s.beginner, s.theme, s.colorMode]);
 
+  const upC = s.colorMode === "kr" ? "#e11d48" : "#16a34a";
+  const downC = s.colorMode === "kr" ? "#2563eb" : "#dc2626";
+
   return (
     <div className="relative w-full">
       <div ref={holder} className="w-full" style={{ height: "min(52vh, 460px)", minHeight: 260 }} />
@@ -216,6 +222,14 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
           }}
           onClose={() => setSel(null)}
         />
+      )}
+      {showMarkers && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 px-1 text-[11px]" style={{ color: "var(--muted)" }}>
+          <span style={{ color: upC }}>▲ 급등</span>
+          <span style={{ color: downC }}>▼ 급락</span>
+          <span style={{ color: "#f59e0b" }}>● 거래량 급증</span>
+          <span>· 마커나 봉을 누르면 그날 상세·뉴스</span>
+        </div>
       )}
     </div>
   );
