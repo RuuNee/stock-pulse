@@ -29,7 +29,7 @@ jobs:
 
       - name: Rebuild site data
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SITE_URL: ${{ vars.SITE_URL }}
         run: python -m pipeline.run sync
 
