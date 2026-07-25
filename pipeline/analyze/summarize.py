@@ -86,7 +86,15 @@ def _rule_explain(ticker: dict, event: dict) -> None:
             f"비슷한 시점에 \"{T.truncate(top, 40)}\" 등의 뉴스가 있었습니다. "
             "아래 관련 기사에서 자세한 배경을 확인할 수 있습니다."
         )
-        event["confidence"] = "low"
+        # Confidence from evidence strength: several closely-matched articles
+        # is a stronger basis than one weak hit. Rule-based caps at "medium".
+        top_score = news[0].get("score", 0) or 0
+        if len(news) >= 3 and top_score >= 1.6:
+            event["confidence"] = "medium"
+        elif len(news) >= 2 and top_score >= 1.4:
+            event["confidence"] = "medium"
+        else:
+            event["confidence"] = "low"
         event["sentiment"] = T.sentiment_of(" ".join(n["title"] for n in news))
     else:
         event["headline"] = label_for(event)

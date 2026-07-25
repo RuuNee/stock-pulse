@@ -400,7 +400,7 @@ LLM_EVENT_BATCH = 6            # events per Gemini call
 # (the rest stays English), and translate ticker news from the cache only —
 # no extra calls. Over daily runs the important news is reliably in Korean.
 TRANSLATE_FOREIGN = True       # auto-translate US/GLOBAL news to Korean
-TRANSLATE_FEED_TOP = 40        # translate only the top-N feed items by importance
+TRANSLATE_FEED_TOP = 20        # translate only the top-N feed items (leave quota for summaries)
 TRANSLATE_TICKER_NEWS = False  # translate ticker news via new calls? (cache reuse always on)
 TRANSLATE_BATCH = 15           # strings per translation call
 TRANSLATE_MAX_ITEMS = 200      # hard cap on translated strings per run
