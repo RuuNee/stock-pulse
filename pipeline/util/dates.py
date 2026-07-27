@@ -64,8 +64,8 @@ def kst_label(dt: datetime | None = None) -> str:
 def next_session_date(market: str) -> date:
     """The trading day the upcoming brief is about.
 
-    The KR brief runs at 07:30 KST, so the session is *today*. The US brief runs
-    at 21:30 KST, which is still the same US calendar day in New York.
+    The KR brief runs at 08:11 KST, so the session is *today*. The US brief runs
+    at 08:41 ET, which is still the same US calendar day in New York.
     """
     local = now_kst() if market == "KR" else now_et()
     d = local.date()

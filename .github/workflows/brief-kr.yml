@@ -1,10 +1,17 @@
 name: brief-kr
 
-# 국장 장전 브리핑 — 평일 07:30 KST (개장 1시간 30분 전).
-# 22:30 UTC (일~목) = 07:30 KST (월~금).
+# 국장 장전 브리핑 — 개장 30분 전 도착 목표.
+#
+# 타이밍 계산
+#   개장 09:00 KST → 목표 도착 08:30 KST
+#   --rebuild 포함 실행 시간 약 19분 → 08:11 KST 시작 = 23:11 UTC (전날)
+#   23:11 UTC 일~목 = 08:11 KST 월~금
+#
+# 분(minute)을 11로 둔 이유: GitHub 스케줄 큐는 정각·30분에 몰려 최대 1시간까지
+# 밀린다(2026-07-26 이 워크플로 실측 57분 지연). 한산한 분에 예약해 지연을 줄인다.
 on:
   schedule:
-    - cron: "30 22 * * 0-4"
+    - cron: "11 23 * * 0-4"
   workflow_dispatch:
 
 concurrency:
@@ -42,5 +49,7 @@ jobs:
             echo "no changes"
           else
             git commit -m "chore(brief): KR $(date -u +'%Y-%m-%d')"
-            git push
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break || sleep 5
+            done
           fi
