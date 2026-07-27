@@ -1,22 +1,29 @@
 name: brief-us
 
-# 미장 장전 브리핑 — 개장 30분 전 도착 목표.
+# 미장 장전 브리핑 — 개장(09:30 ET) 30분 전 도착 목표.
 #
-# 타이밍 계산
-#   개장 09:30 ET → 목표 도착 09:00 ET (= 서머타임 22:00 KST / 표준시 23:00 KST)
-#   --rebuild 포함 실행 시간 약 19분 → 08:41 ET 시작
+# GitHub 스케줄러는 예약 시각을 지키지 않는다 (이 저장소 실측):
+#   2026-07-26 brief-kr  22:30 UTC 예약 → 23:27Z 생성  (+57분)
+#   2026-07-27 brief-us  12:30 UTC 예약 → 15:23Z 생성  (+173분)
+# 그래서 단일 cron으로는 도착 시각을 맞출 수 없다. 대신:
 #
-# cron은 UTC 고정이라 서머타임을 따라가지 못하므로 두 슬롯을 모두 예약하고,
-# ET 기준 08시가 아닌 쪽은 gate 스텝에서 즉시 종료한다.
-#   12:41 UTC = 08:41 EDT (3~11월)  /  09:41 EST → 스킵
-#   13:41 UTC = 08:41 EST (11~3월)  /  09:41 EDT → 스킵
+#   1) 슬롯을 여러 개 예약한다. 하나가 밀려도 다음 슬롯이 제시간에 뜰 확률이 남는다.
+#   2) gate 스텝이 ET 실제 시각을 보고 발송 창(08:35~09:05 ET) 밖이면 즉시 종료한다.
+#      → 늦게 뜬 실행이 개장 후에 브리핑을 쏘는 일이 없다.
+#   3) 오늘자 브리핑 파일이 이미 커밋돼 있으면 종료한다. → 중복 발송 방지.
+#      (같은 concurrency 그룹이라 슬롯끼리 병렬로 겹치지 않는다)
 #
-# 분(minute)을 41로 둔 이유: GitHub 스케줄 큐는 정각·30분에 몰려 최대 1시간까지
-# 밀린다(2026-07-26 brief-kr 실측 57분 지연). 한산한 분에 예약해 지연을 줄인다.
+# 슬롯 = 목표 도착시각 − 빌드 시간(--rebuild 포함 11~19분 실측).
+#   08:41 ET 시작 → 08:52~09:00 도착 (개장 30~38분 전)
+#   08:53 ET 시작 → 09:04~09:12 도착 (개장 18~26분 전, 1차가 밀렸을 때의 예비)
+# cron은 UTC 고정이라 서머타임을 못 따라가므로 EDT/EST 양쪽을 다 예약하고,
+# 계절이 어긋난 슬롯은 gate가 걸러낸다.
 on:
   schedule:
-    - cron: "41 12 * * 1-5"
-    - cron: "41 13 * * 1-5"
+    - cron: "41 12 * * 1-5"   # 08:41 EDT  (EST일 땐 07:41 ET → gate가 종료)
+    - cron: "53 12 * * 1-5"   # 08:53 EDT
+    - cron: "41 13 * * 1-5"   # 08:41 EST  (EDT일 땐 09:41 ET → gate가 종료)
+    - cron: "53 13 * * 1-5"   # 08:53 EST
   workflow_dispatch:
 
 concurrency:
@@ -30,34 +37,50 @@ jobs:
   brief:
     runs-on: ubuntu-latest
     steps:
-      # 체크아웃보다 먼저 판정해 반대편 슬롯은 몇 초 만에 끝낸다.
-      - name: Gate — ET 08시 슬롯만 진행
-        id: gate
+      # 체크아웃보다 먼저 판정해, 창 밖 실행은 몇 초 만에 끝낸다.
+      - name: Gate — 발송 창(08:35~09:05 ET) 안인지
+        id: window
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "수동 실행 — 시각 검사 생략"
             echo "run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          hour=$(TZ=America/New_York date +%H)
-          if [ "$hour" = "08" ]; then
+          now=$((10#$(TZ=America/New_York date +%H%M)))
+          echo "현재 ET $(TZ=America/New_York date +%H:%M)"
+          if [ "$now" -ge 835 ] && [ "$now" -le 905 ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "ET ${hour}시 — 서머타임 반대편 슬롯이므로 건너뜁니다"
+            echo "발송 창 밖 — 건너뜁니다 (스케줄러 지연 또는 서머타임 반대편 슬롯)"
           fi
 
       - uses: actions/checkout@v4
-        if: steps.gate.outputs.run == 'true'
+        if: steps.window.outputs.run == 'true'
+
+      - name: Gate — 오늘자 브리핑이 이미 나갔는지
+        id: dup
+        if: steps.window.outputs.run == 'true'
+        run: |
+          session=$(python3 -c "from pipeline.util.dates import next_session_date; print(next_session_date('US'))")
+          echo "대상 세션 $session"
+          if [ -f "data/brief/${session}-US.json" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "이미 발송됨 — 건너뜁니다"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
-        if: steps.gate.outputs.run == 'true'
+        if: steps.dup.outputs.run == 'true'
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-        if: steps.gate.outputs.run == 'true'
+        if: steps.dup.outputs.run == 'true'
 
       - name: Build + send US brief
-        if: steps.gate.outputs.run == 'true'
+        if: steps.dup.outputs.run == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -66,7 +89,7 @@ jobs:
         run: python -m pipeline.run brief --market US --send --rebuild
 
       - name: Commit brief + refreshed data
-        if: steps.gate.outputs.run == 'true'
+        if: steps.dup.outputs.run == 'true'
         run: |
           git config user.name "stock-pulse-bot"
           git config user.email "actions@github.com"
