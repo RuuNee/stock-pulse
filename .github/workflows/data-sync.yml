@@ -42,5 +42,10 @@ jobs:
             echo "no data changes"
           else
             git commit -m "chore(data): sync $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
+            # 이 잡은 26분쯤 걸려서 그 사이 main 이 움직일 확률이 가장 높다.
+            # 단발 push 로 두었다가 2026-07-27 에 실제로 rejected 나면서
+            # 25분치 재계산 결과를 통째로 날렸다. 다른 워크플로와 동일하게 재시도한다.
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin main && git push && break || sleep 5
+            done
           fi
