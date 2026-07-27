@@ -8,6 +8,7 @@ results behind the feed list.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -415,7 +416,31 @@ def telegram_token() -> str | None:
 
 
 def telegram_chat_id() -> str | None:
-    return os.getenv("TELEGRAM_CHAT_ID") or None
+    """첫 번째 수신자. 여러 명을 받으려면 `telegram_chat_ids()`를 쓴다."""
+    ids = telegram_chat_ids()
+    return ids[0] if ids else None
+
+
+def telegram_chat_ids() -> list[str]:
+    """수신자 목록.
+
+    `TELEGRAM_CHAT_ID`에 콤마·공백·줄바꿈으로 여러 개를 넣을 수 있다.
+    값이 하나뿐이면 길이 1 리스트라 기존 단일 수신자 동작과 완전히 같다.
+
+        TELEGRAM_CHAT_ID=123456789
+        TELEGRAM_CHAT_ID=123456789,987654321,-1001234567890
+
+    개인 chat_id는 상대가 봇에게 먼저 `/start`를 보낸 뒤에야 잡힌다
+    (텔레그램은 봇이 먼저 DM을 걸지 못한다). `telegram-whoami`로 확인할 것.
+    음수 ID는 그룹/채널이다.
+    """
+    raw = os.getenv("TELEGRAM_CHAT_ID") or ""
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", raw):
+        part = part.strip()
+        if part and part not in out:
+            out.append(part)
+    return out
 
 
 def universe(market: str) -> list[tuple[str, str, str, list[str]]]:

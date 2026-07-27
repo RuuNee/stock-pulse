@@ -7,7 +7,8 @@ md파일/01-데이터소스.md.
 
 from __future__ import annotations
 
-from .config import FEEDS, MACRO_SYMBOLS, USER_AGENT, gemini_key, telegram_token
+from .config import (FEEDS, MACRO_SYMBOLS, USER_AGENT, gemini_key,
+                     telegram_chat_ids, telegram_token)
 from .util import log
 
 
@@ -67,6 +68,8 @@ def run() -> int:
     log.step("시크릿")
     log.ok(f"GEMINI_API_KEY: {'있음 (LLM 요약·번역 활성)' if gemini_key() else '없음 (규칙 기반 폴백, 번역 없음)'}")
     log.ok(f"TELEGRAM_BOT_TOKEN: {'있음' if telegram_token() else '없음'}")
+    chat_ids = telegram_chat_ids()
+    log.ok(f"TELEGRAM_CHAT_ID: {f'수신자 {len(chat_ids)}명' if chat_ids else '없음 (발송 스킵)'}")
 
     log.step("결과")
     if failures:

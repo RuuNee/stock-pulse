@@ -12,11 +12,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..config import telegram_chat_id, telegram_token
+from ..config import telegram_chat_ids, telegram_token
 from ..util import log
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 _LIMIT = 3900  # under Telegram's 4096 to leave room for entities
+_RECIPIENT_DELAY_SEC = 0.5  # 수신자 사이 간격. 1명이면 대기 자체가 없다
 _UP, _DOWN = "🔴", "🔵"  # 한국식: 상승 빨강 / 하락 파랑
 
 
@@ -106,16 +107,32 @@ def _split(text: str) -> list[str]:
 
 def send(text: str, *, token: str | None = None, chat_id: str | None = None,
          retries: int = 3) -> bool:
+    """브리핑을 발송한다.
+
+    수신자는 `TELEGRAM_CHAT_ID`(콤마 구분으로 여러 명 가능)에서 읽는다.
+    `chat_id`를 넘기면 그 한 명에게만 보낸다 — 기존 호출부와 동일.
+    한 명이 실패해도 나머지에게는 계속 보내고, 전원 성공일 때만 True.
+    """
     token = token or telegram_token()
-    chat_id = chat_id or telegram_chat_id()
-    if not token or not chat_id:
+    targets = [chat_id] if chat_id else telegram_chat_ids()
+    if not token or not targets:
         log.warn("telegram token/chat_id missing — skipping send")
         return False
 
+    parts = _split(text)
     ok_all = True
-    for part in _split(text):
-        if not _post(token, chat_id, part, retries):
+    for i, target in enumerate(targets):
+        if i:
+            time.sleep(_RECIPIENT_DELAY_SEC)
+        ok = True
+        for part in parts:
+            if not _post(token, target, part, retries):
+                ok = False
+        if not ok:
             ok_all = False
+            log.warn(f"chat_id={target} 발송 실패 — 나머지 수신자는 계속 진행")
+    if len(targets) > 1:
+        log.info(f"텔레그램 수신자 {len(targets)}명")
     return ok_all
 
 
@@ -137,6 +154,9 @@ def _post(token: str, chat_id: str, text: str, retries: int) -> bool:
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")[:200]
             log.warn(f"telegram HTTP {exc.code}: {body}")
+            hint = _hint(exc.code, body)
+            if hint:
+                log.warn(f"  → {hint}")
             if exc.code == 429:
                 time.sleep(2 ** attempt)
                 continue
@@ -145,6 +165,20 @@ def _post(token: str, chat_id: str, text: str, retries: int) -> bool:
             log.warn(f"telegram send error: {exc}")
         time.sleep(1.5 * (attempt + 1))
     return False
+
+
+def _hint(code: int, body: str) -> str | None:
+    """수신자를 새로 추가할 때 실제로 자주 걸리는 실패들을 사람 말로 옮긴다."""
+    low = body.lower()
+    if "initiate conversation" in low:
+        return "상대가 봇에게 먼저 /start 를 보내야 DM을 받을 수 있습니다."
+    if "chat not found" in low:
+        return "chat_id가 틀렸습니다. `python -m pipeline.run telegram-whoami` 로 확인하세요."
+    if "blocked" in low:
+        return "상대가 봇을 차단했습니다."
+    if code == 403:
+        return "봇이 이 대화에 접근할 수 없습니다(그룹에서 추방됐거나 권한 부족)."
+    return None
 
 
 def whoami(token: str | None = None) -> None:
@@ -174,3 +208,6 @@ def whoami(token: str | None = None) -> None:
     log.ok("찾은 chat_id:")
     for cid, name in seen.items():
         print(f"  chat_id={cid}  ({name})")
+    if len(seen) > 1:
+        print(f"\n  여러 명에게 보내려면 그대로 붙여넣으세요:")
+        print(f"  TELEGRAM_CHAT_ID={','.join(str(c) for c in seen)}")

@@ -40,7 +40,9 @@ cd web && npm install && npm run dev
 
 시크릿 등록, 텔레그램 봇 세팅, Vercel 배포 등 실가동 절차는 **[md파일/05-운영가이드.md](md파일/05-운영가이드.md)** 참고.
 
-필요한 시크릿: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY` (없어도 규칙 기반 요약으로 동작).
+필요한 시크릿: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GEMINI_API_KEY` (없어도 규칙 기반 요약으로 동작).
+
+`TELEGRAM_CHAT_ID`는 콤마로 여러 명을 넣을 수 있다 — 세팅 절차는 운영가이드 ④-1 참고.
 
 ## 📄 문서
 
