@@ -1,4 +1,4 @@
-﻿# Stock Pulse - 로컬 개발 서버 실행 + 브라우저 자동 열기
+﻿# Stock Pulse - 로컬 개발 서버를 백그라운드로 실행 + 브라우저 자동 열기
 # start-web.bat 이 이 스크립트를 호출합니다.
 
 try {
@@ -6,26 +6,48 @@ try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 } catch { }
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$web  = Join-Path $root 'web'
-$port = 5173
-$url  = "http://localhost:$port"
+$root    = Split-Path -Parent $MyInvocation.MyCommand.Path
+$web     = Join-Path $root 'web'
+$port    = 5173
+$url     = "http://localhost:$port"
+$pidFile = Join-Path $root '.dev-server.pid'
+$logFile = Join-Path $root '.dev-server.log'
+
+# vite 는 로컬 루프백을 IPv6(::1)에만 바인딩할 때가 있어서 127.0.0.1 소켓 연결로는
+# 놓친다. 그래서 리슨 소켓 목록을 직접 본다.
+$hasNetTcp = [bool](Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)
 
 function Test-PortOpen {
     param([int]$Port)
-    try {
-        (New-Object Net.Sockets.TcpClient('127.0.0.1', $Port)).Close()
-        return $true
-    } catch {
-        return $false
+    if ($hasNetTcp) {
+        try {
+            return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+        } catch {
+            return $false
+        }
     }
+    foreach ($addr in @('127.0.0.1', '::1')) {
+        $client = New-Object Net.Sockets.TcpClient
+        try {
+            $async = $client.BeginConnect($addr, $Port, $null, $null)
+            if ($async.AsyncWaitHandle.WaitOne(300) -and $client.Connected) { return $true }
+        } catch {
+        } finally {
+            $client.Close()
+        }
+    }
+    return $false
 }
 
 function Wait-AndExit {
     param([int]$Code)
     Write-Host ''
-    Write-Host '엔터를 누르면 창이 닫힙니다.' -ForegroundColor DarkGray
-    [void](Read-Host)
+    Write-Host '아무 키나 누르면 이 창이 닫힙니다.' -ForegroundColor DarkGray
+    try {
+        [void][Console]::ReadKey($true)
+    } catch {
+        [void](Read-Host)
+    }
     exit $Code
 }
 
@@ -34,6 +56,13 @@ Write-Host '  Stock Pulse - 로컬 서버 실행'
 Write-Host '=========================================='
 Write-Host ''
 
+# --- 이미 켜져 있으면 알리고 끝 ---
+if (Test-PortOpen $port) {
+    Write-Host "[i] 서버가 이미 백그라운드에서 실행 중입니다. ($url)" -ForegroundColor Yellow
+    Write-Host '    중지하려면 stop-web.bat 을 실행하세요.'
+    Wait-AndExit 0
+}
+
 # --- Node.js 확인 ---
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host '[X] Node.js 를 찾을 수 없습니다.' -ForegroundColor Red
@@ -41,44 +70,59 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Wait-AndExit 1
 }
 
-# --- 이미 켜져 있으면 브라우저만 열고 종료 ---
-if (Test-PortOpen $port) {
-    Write-Host "[i] 이미 $port 포트에서 서버가 돌고 있습니다. 브라우저만 엽니다." -ForegroundColor Yellow
-    Start-Process $url
-    Start-Sleep -Seconds 1
-    exit 0
-}
-
 if (-not (Test-Path (Join-Path $web 'package.json'))) {
     Write-Host "[X] web 폴더를 찾을 수 없습니다: $web" -ForegroundColor Red
     Wait-AndExit 1
 }
-Set-Location $web
 
-# --- 의존성 설치 ---
+# --- 의존성 설치 (백그라운드로 넘기기 전에 이 창에서 처리) ---
 if (-not (Test-Path (Join-Path $web 'node_modules\vite'))) {
-    Write-Host '[1/2] 의존성 설치 중 ... npm install'
+    Write-Host '[1/3] 의존성 설치 중 ... npm install'
+    Push-Location $web
     & npm install
-    if ($LASTEXITCODE -ne 0) {
+    $installCode = $LASTEXITCODE
+    Pop-Location
+    if ($installCode -ne 0) {
         Write-Host '[X] npm install 실패' -ForegroundColor Red
         Wait-AndExit 1
     }
 } else {
-    Write-Host '[1/2] 의존성 확인 완료' -ForegroundColor Green
+    Write-Host '[1/3] 의존성 확인 완료' -ForegroundColor Green
 }
 
-# --- 서버가 뜨는 즉시 브라우저 자동 실행 (백그라운드 감시, 최대 60초) ---
-$watcher = "for(`$i=0;`$i -lt 120;`$i++){try{(New-Object Net.Sockets.TcpClient('127.0.0.1',$port)).Close();Start-Sleep -Milliseconds 400;Start-Process '$url';break}catch{Start-Sleep -Milliseconds 500}}"
-Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $watcher | Out-Null
+# --- dev 서버를 숨김 창으로 띄우고 PID 기록 ---
+Write-Host '[2/3] 백그라운드에서 dev 서버 시작 ...' -ForegroundColor Green
+$proc = Start-Process -FilePath 'cmd.exe' `
+                      -ArgumentList "/c npm run dev -- --port $port --strictPort > `"$logFile`" 2>&1" `
+                      -WorkingDirectory $web `
+                      -WindowStyle Hidden `
+                      -PassThru
+Set-Content -Path $pidFile -Value $proc.Id -Encoding ascii
 
-Write-Host '[2/2] dev 서버 시작 ... (data/ 를 web/public/data 로 자동 복사)' -ForegroundColor Green
+# --- 포트가 열릴 때까지 대기 (최대 60초) ---
+$ready = $false
+for ($i = 0; $i -lt 120; $i++) {
+    if (Test-PortOpen $port) { $ready = $true; break }
+    if ($proc.HasExited) { break }
+    Start-Sleep -Milliseconds 500
+}
+
+if (-not $ready) {
+    Write-Host '[X] 서버가 시작되지 않았습니다. 로그 마지막 부분:' -ForegroundColor Red
+    if (Test-Path $logFile) {
+        Get-Content $logFile -Tail 20 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    }
+    Write-Host "    전체 로그: $logFile"
+    Wait-AndExit 1
+}
+
+Write-Host '[3/3] 준비 완료 - 브라우저를 엽니다.' -ForegroundColor Green
+Start-Process $url
+
 Write-Host ''
 Write-Host "     주소 : $url" -ForegroundColor Cyan
-Write-Host '     종료 : 이 창에서 Ctrl+C, 또는 창 닫기'
+Write-Host "     로그 : $logFile"
+Write-Host '     중지 : stop-web.bat'
 Write-Host ''
-
-& npm run dev
-
-Write-Host ''
-Write-Host '[i] 서버가 종료되었습니다.'
+Write-Host '이 창을 닫아도 서버는 계속 실행됩니다.' -ForegroundColor DarkGray
 Wait-AndExit 0
