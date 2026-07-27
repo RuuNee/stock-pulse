@@ -60,6 +60,11 @@ jobs:
         if: steps.window.outputs.run == 'true'
         run: |
           session=$(python3 -c "from pipeline.util.dates import next_session_date; print(next_session_date('KR'))")
+          # 세션 일자를 못 구하면 중복 판정이 무의미하다. 조용히 발송하느니 실패시킨다.
+          if [ -z "$session" ]; then
+            echo "세션 일자 계산 실패 — 중단"
+            exit 1
+          fi
           echo "대상 세션 $session"
           if [ -f "data/brief/${session}-KR.json" ]; then
             echo "run=false" >> "$GITHUB_OUTPUT"
