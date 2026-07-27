@@ -22,7 +22,7 @@ CACHE_DIR = ROOT / ".cache"
 KST = ZoneInfo("Asia/Seoul")
 ET = ZoneInfo("America/New_York")
 
-SITE_URL = os.getenv("SITE_URL", "https://stock-pulse.vercel.app")
+SITE_URL = os.getenv("SITE_URL", "https://stock-pulse-kappa-eight.vercel.app")
 
 # --------------------------------------------------------------------------
 # Universe
