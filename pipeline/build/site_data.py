@@ -69,23 +69,58 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
 
     log.step("6/6 · macro + overview + shared files")
     macro_indices = macro_mod.collect()
-    overview = _build_overview(macro_indices, index_items, market_news, markets)
+
+    # 부분 빌드(`--market KR` 등)는 요청한 시장만 새로 만든다. 공유 파일은 통째로
+    # 덮어쓰면 다른 시장 데이터가 사라지므로, 이전 파일에서 그쪽 몫을 살려 합친다.
+    # (brief-* 워크플로가 `--rebuild`로 단일 시장 빌드를 돌리기 때문에 실제로 발생했다)
+    prev_index = io.read_json(DATA_DIR / "tickers" / "index.json", {}) or {}
+    prev_overview = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
+    prev_news = io.read_json(DATA_DIR / "news" / "latest.json", {}) or {}
+    prev_manifest = io.read_json(DATA_DIR / "manifest.json", {}) or {}
+
+    all_items = _merge_by_market(prev_index.get("items", []), index_items, markets)
+    all_news = _merge_news(prev_news.get("items", []), market_news, markets)
+    overview = _build_overview(macro_indices, index_items, markets, prev_overview)
+
     io.write_json(DATA_DIR / "tickers" / "index.json",
-                  {"generatedAt": iso(started), "items": index_items})
+                  {"generatedAt": iso(started), "items": all_items})
     io.write_json(DATA_DIR / "market" / "overview.json", overview)
     io.write_json(DATA_DIR / "news" / "latest.json",
-                  {"generatedAt": iso(started), "items": market_news[:NEWS_MAX_ITEMS]})
+                  {"generatedAt": iso(started), "items": all_news})
 
-    manifest = _manifest(started, index_items, market_news, markets)
+    manifest = _manifest(started, all_items, all_news, markets, prev_manifest)
     io.write_json(DATA_DIR / "manifest.json", manifest)
 
-    log.ok(f"done · {len(index_items)} tickers, {len(market_news)} news · {llm.stats()}")
+    log.ok(f"done · {len(index_items)}/{len(all_items)} tickers, "
+           f"{len(market_news)}/{len(all_news)} news · {llm.stats()}")
     return {
-        "tickers": index_items,
+        "tickers": all_items,
         "overview": overview,
-        "news": market_news,
+        "news": all_news,
         "manifest": manifest,
     }
+
+
+def _merge_by_market(previous: list[dict], fresh: list[dict],
+                     markets: tuple[str, ...]) -> list[dict]:
+    """이번에 빌드하지 않은 시장의 항목을 이전 파일에서 살려 합친다."""
+    kept = [it for it in previous if it.get("market") not in markets]
+    return fresh + kept
+
+
+def _merge_news(previous: list[dict], fresh: list[dict],
+                markets: tuple[str, ...]) -> list[dict]:
+    """뉴스도 같은 원리. url 중복은 이번 빌드 결과를 우선한다.
+
+    `GLOBAL` 뉴스는 어느 시장 빌드에서도 나올 수 있어 `markets`에 안 걸리는데,
+    url 중복 제거가 그 몫을 처리한다.
+    """
+    seen = {n.get("url") for n in fresh if n.get("url")}
+    kept = [n for n in previous
+            if n.get("market") not in markets and n.get("url") not in seen]
+    out = fresh + kept
+    out.sort(key=lambda n: n.get("importance", 0), reverse=True)
+    return out[:NEWS_MAX_ITEMS]
 
 
 def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
@@ -110,10 +145,14 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     prev = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
     movers = prev.get("movers", {})
     sectors = prev.get("sectors", {})
-    market_mood = {
-        m: mood.score_market(m, macro_indices, movers.get(m, {"up": [], "down": []}))
-        for m in markets
-    }
+    # build()와 같은 이유로 요청한 시장만 갱신하고 나머지는 이전 값을 유지한다.
+    market_mood = dict(prev.get("marketMood") or {})
+    for m in markets:
+        market_mood[m] = mood.score_market(
+            m, macro_indices, movers.get(m, {"up": [], "down": []}))
+
+    prev_news = io.read_json(DATA_DIR / "news" / "latest.json", {}) or {}
+    all_news = _merge_news(prev_news.get("items", []), market_news, markets)
 
     overview = {
         "generatedAt": iso(started),
@@ -124,15 +163,16 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     }
     io.write_json(DATA_DIR / "market" / "overview.json", overview)
     io.write_json(DATA_DIR / "news" / "latest.json",
-                  {"generatedAt": iso(started), "items": market_news[:NEWS_MAX_ITEMS]})
+                  {"generatedAt": iso(started), "items": all_news})
 
     manifest = io.read_json(DATA_DIR / "manifest.json", {}) or {}
     manifest["generatedAt"] = iso(started)
     manifest["generatedAtKst"] = now_kst().strftime("%Y-%m-%d %H:%M")
     io.write_json(DATA_DIR / "manifest.json", manifest)
 
-    log.ok(f"pulse done · {len(macro_indices)} indices, {len(market_news)} news")
-    return {"overview": overview, "news": market_news}
+    log.ok(f"pulse done · {len(macro_indices)} indices, "
+           f"{len(market_news)}/{len(all_news)} news")
+    return {"overview": overview, "news": all_news}
 
 
 # Run-scoped translation cache: source string (en) → Korean.
@@ -309,12 +349,19 @@ def _index_entry(detail: dict) -> dict:
     }
 
 
-def _build_overview(macro_indices, index_items, market_news, markets) -> dict:
-    sectors = {m: _sector_heatmap(index_items, m) for m in markets}
-    movers = {m: _movers(index_items, m) for m in markets}
-    market_mood = {
-        m: mood.score_market(m, macro_indices, movers[m]) for m in markets
-    }
+def _build_overview(macro_indices, index_items, markets, previous=None) -> dict:
+    """이번에 빌드한 시장만 갱신하고 나머지는 이전 overview에서 가져온다.
+
+    `indices`(매크로)는 시장과 무관하게 매번 전체를 수집하므로 그대로 교체한다.
+    """
+    previous = previous or {}
+    sectors = dict(previous.get("sectors") or {})
+    movers = dict(previous.get("movers") or {})
+    market_mood = dict(previous.get("marketMood") or {})
+    for m in markets:
+        sectors[m] = _sector_heatmap(index_items, m)
+        movers[m] = _movers(index_items, m)
+        market_mood[m] = mood.score_market(m, macro_indices, movers[m])
     return {
         "generatedAt": iso(now_utc()),
         "indices": macro_indices,
@@ -382,9 +429,10 @@ def _news_brief(n: dict) -> dict:
     }
 
 
-def _manifest(started, index_items, market_news, markets) -> dict:
-    events_total = sum(it["eventCount"] for it in index_items)
-    market_blocks = {}
+def _manifest(started, index_items, market_news, markets, previous=None) -> dict:
+    events_total = sum(it.get("eventCount", 0) for it in index_items)
+    # 빌드하지 않은 시장의 블록은 이전 manifest 값을 유지한다.
+    market_blocks = dict((previous or {}).get("markets") or {})
     for m in markets:
         last = _last_trading_day(index_items, m)
         market_blocks[m] = {

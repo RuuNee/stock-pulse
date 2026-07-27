@@ -68,9 +68,21 @@ export default function Market() {
       <section>
         <h2 className="text-base font-bold mb-2.5">전체 종목</h2>
         <div className="card divide-y" style={{ borderColor: "var(--border)" }}>
-          {list.length
-            ? list.map((t) => <TickerRow key={t.code} t={t} />)
-            : <div className="p-6 text-center text-sm" style={{ color: "var(--muted)" }}>데이터 로딩 중…</div>}
+          {/* 로딩·실패·빈 데이터를 구분한다. 예전엔 셋 다 "로딩 중"으로 보여서
+              데이터가 실제로 비었을 때 원인을 알 수 없었다. */}
+          {tickers.loading ? (
+            <div className="p-6 text-center text-sm" style={{ color: "var(--muted)" }}>데이터 로딩 중…</div>
+          ) : tickers.error ? (
+            <div className="p-6 text-center text-sm" style={{ color: "var(--muted)" }}>
+              데이터를 불러오지 못했습니다.
+            </div>
+          ) : list.length ? (
+            list.map((t) => <TickerRow key={t.code} t={t} />)
+          ) : (
+            <div className="p-6 text-center text-sm" style={{ color: "var(--muted)" }}>
+              {title} 종목 데이터가 아직 없습니다.
+            </div>
+          )}
         </div>
       </section>
     </div>
