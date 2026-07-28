@@ -7,6 +7,7 @@ import NewsCard from "../components/NewsCard";
 import Sparkline from "../components/Sparkline";
 import ChangeBadge from "../components/ChangeBadge";
 import Term from "../components/Term";
+import UpdateTip from "../components/UpdateTip";
 import type { MacroIndex, Market } from "../lib/types";
 
 export default function Home() {
@@ -74,7 +75,11 @@ export default function Home() {
 
       <p className="text-xs text-center leading-relaxed" style={{ color: "var(--muted)" }}>
         본 사이트는 공개된 뉴스를 정리한 <Term k="etf">정보 제공</Term> 서비스이며 투자 권유가 아닙니다.
-        {manifest.data && <><br />마지막 갱신 {manifest.data.generatedAtKst}</>}
+        {manifest.data && (
+          <>
+            <br />마지막 갱신 {manifest.data.generatedAtKst} · <UpdateTip up />
+          </>
+        )}
       </p>
     </div>
   );

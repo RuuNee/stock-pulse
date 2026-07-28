@@ -7,6 +7,7 @@ import TickerChart from "../components/TickerChart";
 import ChangeBadge from "../components/ChangeBadge";
 import NewsCard from "../components/NewsCard";
 import Term from "../components/Term";
+import UpdateTip from "../components/UpdateTip";
 import { fmtMarcap, fmtPrice, fmtVolume, volLabel } from "../lib/format";
 import type { ChartEvent, Market as Mkt, TickerDetail } from "../lib/types";
 
@@ -105,6 +106,10 @@ export default function Ticker() {
       <div className="card p-2 pt-3">
         <TickerChart detail={d} range={range} showMarkers={showMarkers} showMA={showMA} onEventNews={jumpToEvent} />
       </div>
+      {/* 장중에 보면 오늘 봉이 없다 — 왜 그런지 여기서 바로 답한다. */}
+      <p className="text-xs -mt-1" style={{ color: "var(--muted)" }}>
+        <UpdateTip />
+      </p>
 
       {/* quote stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
