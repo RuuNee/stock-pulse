@@ -4,6 +4,7 @@
     python -m pipeline.run sync                # rebuild all site data
     python -m pipeline.run sync --market KR    # one market only
     python -m pipeline.run pulse               # light macro + news refresh
+    python -m pipeline.run status              # 브리핑 나갔나 / 다음은 언제인가
     python -m pipeline.run gate --market KR    # true/false: send the brief now?
     python -m pipeline.run brief --market KR --dry-run
     python -m pipeline.run brief --market KR --send
@@ -93,6 +94,11 @@ def _cmd_gate(args) -> int:
     return 0
 
 
+def _cmd_status(args) -> int:
+    from .status import run as status_run
+    return status_run(_markets(args.market))
+
+
 def _cmd_doctor(args) -> int:
     from .doctor import run as doctor_run
     return doctor_run()
@@ -149,6 +155,10 @@ def main(argv=None) -> int:
     p_gate.add_argument("--market", required=True, help="KR | US")
     p_gate.add_argument("--force", action="store_true", help="manual run — skip time/dup checks")
     p_gate.set_defaults(func=_cmd_gate)
+
+    p_status = sub.add_parser("status", help="브리핑 상태 — 나갔는지, 다음은 언제인지")
+    p_status.add_argument("--market", help="KR | US | ALL (default ALL)")
+    p_status.set_defaults(func=_cmd_status)
 
     p_doc = sub.add_parser("doctor", help="check data sources")
     p_doc.set_defaults(func=_cmd_doctor)

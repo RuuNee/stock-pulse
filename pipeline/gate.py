@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from .config import BRIEF_WINDOW, DATA_DIR
@@ -65,6 +65,26 @@ def decide(market: str, *, force: bool = False, now: datetime | None = None,
     if now.time() > end:
         return False, f"현재 {label} — 발송 창({span}) 후, 스케줄러 지연으로 이 슬롯은 버립니다"
     return True, f"현재 {label} — 발송 창({span}) 안, 발송합니다"
+
+
+def next_send(market: str, now: datetime | None = None,
+              data_dir: Path | None = None) -> tuple[datetime, datetime] | None:
+    """다음으로 브리핑이 나갈 발송 창 (시작, 끝). 현지 시각 기준.
+
+    "왜 아직 안 왔지"에 답하기 위한 것이다 — 오늘 창이 아직 안 지났고 브리핑도
+    없으면 오늘 창을, 이미 나갔거나 창이 지났으면 다음 거래일 창을 돌려준다.
+    """
+    market = market.upper()
+    now = now or local_now(market)
+    start_t, end_t = window(market)
+    day = now.date()
+    for _ in range(14):
+        if is_trading_day(market, day):
+            end_dt = datetime.combine(day, end_t, tzinfo=now.tzinfo)
+            if end_dt > now and not brief_path(market, day, data_dir).exists():
+                return datetime.combine(day, start_t, tzinfo=now.tzinfo), end_dt
+        day += timedelta(days=1)
+    return None
 
 
 def _hhmm(value: str) -> time:
