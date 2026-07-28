@@ -63,6 +63,29 @@ def test_brief_does_not_rebuild(name):
 
 
 @pytest.mark.parametrize("name", BRIEFS)
+def test_rehearsal_never_commits(name):
+    """리허설(`send=false` dispatch)이 브리핑 파일을 커밋하면 중복 게이트가 그날
+    진짜 발송을 막는다 — 고치려던 사고를 손으로 재현하는 꼴이 된다."""
+    steps = load(WORKFLOW_DIR / name)["jobs"]["brief"]["steps"]
+    commit = [s for s in steps if "commit-data.sh" in (s.get("run") or "")]
+    assert commit, f"{name}: 커밋 스텝을 못 찾았습니다"
+    for step in commit:
+        assert "steps.gate.outputs.send != ''" in step.get("if", ""), \
+            f"{name}: 커밋 스텝이 발송 여부로 가드되지 않습니다"
+
+
+@pytest.mark.parametrize("name", BRIEFS)
+def test_scheduled_run_always_sends(name):
+    """스케줄 실행에서 `--send` 가 빠지면 브리핑이 조용히 안 나간다."""
+    gate = [s for s in load(WORKFLOW_DIR / name)["jobs"]["brief"]["steps"]
+            if s.get("id") == "gate"][0]
+    body = gate["run"]
+    assert 'send="--send"' in body, f"{name}: 기본값이 발송이어야 합니다"
+    # 리허설로 떨어지는 분기는 workflow_dispatch 안에만 있어야 한다.
+    assert 'if [ "$EVENT" != "schedule" ]; then' in body
+
+
+@pytest.mark.parametrize("name", BRIEFS)
 def test_brief_has_own_concurrency_group(name):
     """data-sync(26분) 뒤에 큐잉되면 발송 창을 통째로 놓친다."""
     group = load(WORKFLOW_DIR / name)["concurrency"]["group"]
