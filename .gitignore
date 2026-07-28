@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 venv/
 .cache/
+.pytest_cache/
 
 # node / vite
 node_modules/

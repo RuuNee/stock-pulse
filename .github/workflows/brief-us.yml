@@ -1,33 +1,28 @@
 name: brief-us
 
-# 미장 장전 브리핑 — 개장(09:30 ET) 30분 전 도착 목표.
+# 미장 장전 브리핑 — 개장(09:30 ET) 20~75분 전 도착 목표.
+# 설계 근거는 brief-kr.yml 머리말 참고 (스케줄러 지연 6~202분 대응).
 #
-# GitHub 스케줄러는 예약 시각을 지키지 않는다 (이 저장소 실측):
-#   2026-07-26 brief-kr  22:30 UTC 예약 → 23:27Z 생성  (+57분)
-#   2026-07-27 brief-us  12:30 UTC 예약 → 15:23Z 생성  (+173분)
-# 그래서 단일 cron으로는 도착 시각을 맞출 수 없다. 대신:
-#
-#   1) 슬롯을 여러 개 예약한다. 하나가 밀려도 다음 슬롯이 제시간에 뜰 확률이 남는다.
-#   2) gate 스텝이 ET 실제 시각을 보고 발송 창(08:35~09:05 ET) 밖이면 즉시 종료한다.
-#      → 늦게 뜬 실행이 개장 후에 브리핑을 쏘는 일이 없다.
-#   3) 오늘자 브리핑 파일이 이미 커밋돼 있으면 종료한다. → 중복 발송 방지.
-#      (같은 concurrency 그룹이라 슬롯끼리 병렬로 겹치지 않는다)
-#
-# 슬롯 = 목표 도착시각 − 빌드 시간(--rebuild 포함 11~19분 실측).
-#   08:41 ET 시작 → 08:52~09:00 도착 (개장 30~38분 전)
-#   08:53 ET 시작 → 09:04~09:12 도착 (개장 18~26분 전, 1차가 밀렸을 때의 예비)
-# cron은 UTC 고정이라 서머타임을 못 따라가므로 EDT/EST 양쪽을 다 예약하고,
-# 계절이 어긋난 슬롯은 gate가 걸러낸다.
+# 미장만의 사정: cron 은 UTC 고정이라 서머타임을 못 따라간다. 그래서 슬롯을
+# EDT/EST 양쪽 창을 모두 덮도록 UTC 08:40~14:00 에 40분 간격으로 깔고,
+# 계절이 어긋난 슬롯은 gate 가 ET 실제 시각을 보고 걸러낸다.
+#   EDT(UTC−4) 발송 창 = 12:15~13:10 UTC
+#   EST(UTC−5) 발송 창 = 13:15~14:10 UTC
 on:
   schedule:
-    - cron: "41 12 * * 1-5"   # 08:41 EDT  (EST일 땐 07:41 ET → gate가 종료)
-    - cron: "53 12 * * 1-5"   # 08:53 EDT
-    - cron: "41 13 * * 1-5"   # 08:41 EST  (EDT일 땐 09:41 ET → gate가 종료)
-    - cron: "53 13 * * 1-5"   # 08:53 EST
+    - cron: "40 8 * * 1-5"    # 04:40 EDT — 4시간 밀린 실행을 받는 슬롯
+    - cron: "20 9 * * 1-5"
+    - cron: "0 10 * * 1-5"
+    - cron: "40 10 * * 1-5"
+    - cron: "20 11 * * 1-5"
+    - cron: "0 12 * * 1-5"
+    - cron: "40 12 * * 1-5"   # 08:40 EDT — EDT 에서 지연이 없을 때의 슬롯
+    - cron: "20 13 * * 1-5"   # 08:20 EST — EST 에서 지연이 없을 때의 슬롯
+    - cron: "0 14 * * 1-5"    # 09:00 EST
   workflow_dispatch:
 
 concurrency:
-  group: stock-pulse-data
+  group: stock-pulse-brief-US   # 슬롯끼리만 직렬화. data-sync/pulse 와는 무관하다
   cancel-in-progress: false
 
 permissions:
@@ -37,73 +32,48 @@ jobs:
   brief:
     runs-on: ubuntu-latest
     steps:
-      # 체크아웃보다 먼저 판정해, 창 밖 실행은 몇 초 만에 끝낸다.
-      - name: Gate — 발송 창(08:35~09:05 ET) 안인지
-        id: window
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "수동 실행 — 시각 검사 생략"
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          now=$((10#$(TZ=America/New_York date +%H%M)))
-          echo "현재 ET $(TZ=America/New_York date +%H:%M)"
-          if [ "$now" -ge 835 ] && [ "$now" -le 905 ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "발송 창 밖 — 건너뜁니다 (스케줄러 지연 또는 서머타임 반대편 슬롯)"
-          fi
-
+      # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 중복 판정도 커밋도 최신
+      # main 기준이어야 하므로 명시적으로 main 을 받는다.
       - uses: actions/checkout@v4
-        if: steps.window.outputs.run == 'true'
+        with:
+          ref: main
 
-      - name: Gate — 오늘자 브리핑이 이미 나갔는지
-        id: dup
-        if: steps.window.outputs.run == 'true'
+      - name: Gate — 지금 발송해야 하는지
+        id: gate
         run: |
-          session=$(python3 -c "from pipeline.util.dates import next_session_date; print(next_session_date('US'))")
-          # 세션 일자를 못 구하면 중복 판정이 무의미하다. 조용히 발송하느니 실패시킨다.
-          if [ -z "$session" ]; then
-            echo "세션 일자 계산 실패 — 중단"
-            exit 1
-          fi
-          echo "대상 세션 $session"
-          if [ -f "data/brief/${session}-US.json" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "이미 발송됨 — 건너뜁니다"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          args="--market US"
+          # 사람이 직접 돌린 실행은 시각·중복 검사를 건너뛴다.
+          [ "${{ github.event_name }}" = "schedule" ] || args="$args --force"
+          decision=$(python3 -m pipeline.run gate $args)
+          echo "run=$decision" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
-        if: steps.dup.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-        if: steps.dup.outputs.run == 'true'
+        if: steps.gate.outputs.run == 'true'
 
-      - name: Build + send US brief
-        if: steps.dup.outputs.run == 'true'
+      - name: 경량 갱신 (매크로·환율·뉴스)
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m pipeline.run pulse --market US
+
+      - name: 브리핑 생성 + 텔레그램 발송
+        if: steps.gate.outputs.run == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SITE_URL: ${{ vars.SITE_URL }}
-        run: python -m pipeline.run brief --market US --send --rebuild
+        run: python -m pipeline.run brief --market US --send
 
-      - name: Commit brief + refreshed data
-        if: steps.dup.outputs.run == 'true'
+      # 발송이 실패하면 여기까지 오지 않는다 → 브리핑 파일이 커밋되지 않고,
+      # 남은 슬롯이 같은 세션을 다시 시도한다.
+      - name: 브리핑 + 갱신된 데이터 커밋
+        if: steps.gate.outputs.run == 'true'
         run: |
-          git config user.name "stock-pulse-bot"
-          git config user.email "actions@github.com"
-          git add data/
-          if git diff --cached --quiet; then
-            echo "no changes"
-          else
-            git commit -m "chore(brief): US $(date -u +'%Y-%m-%d')"
-            for i in 1 2 3; do
-              git pull --rebase --autostash origin main && git push && break || sleep 5
-            done
-          fi
+          bash .github/scripts/commit-data.sh "chore(brief): US $(TZ=America/New_York date +'%Y-%m-%d')"

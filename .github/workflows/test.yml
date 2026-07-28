@@ -1,0 +1,30 @@
+name: test
+
+# 파이프라인·워크플로 스케줄을 건드린 푸시에서만 돈다. data/ 커밋은 하루에도
+# 수십 번 올라오므로 paths 로 걸러 Actions 사용 분을 아낀다.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pipeline/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - ".github/workflows/brief-*.yml"
+      - ".github/workflows/test.yml"
+      - ".github/scripts/**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # 테스트는 파이프라인 무거운 의존성 없이 도는 부분만 검증한다.
+      - run: pip install -r requirements-dev.txt
+      - run: bash -n .github/scripts/commit-data.sh
+      - run: python -m pytest tests -q

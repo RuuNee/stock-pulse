@@ -61,13 +61,14 @@ def kst_label(dt: datetime | None = None) -> str:
     return f"{dt.year}년 {dt.month}월 {dt.day}일 {WEEKDAY_KR[dt.weekday()]}요일"
 
 
-def next_session_date(market: str) -> date:
+def next_session_date(market: str, now: datetime | None = None) -> date:
     """The trading day the upcoming brief is about.
 
-    The KR brief runs at 08:11 KST, so the session is *today*. The US brief runs
-    at 08:41 ET, which is still the same US calendar day in New York.
+    The KR brief runs in the 07:45~08:40 KST window, so the session is *today*.
+    The US brief runs 08:15~09:10 ET, still the same US calendar day in New York.
+    `now` is injectable so the gate can be tested at arbitrary clock positions.
     """
-    local = now_kst() if market == "KR" else now_et()
+    local = now or (now_kst() if market == "KR" else now_et())
     d = local.date()
     for _ in range(10):
         if is_trading_day(market, d):

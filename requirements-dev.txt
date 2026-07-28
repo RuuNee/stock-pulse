@@ -1,0 +1,4 @@
+# 테스트 전용. 파이프라인 런타임 의존성(requirements.txt)은 필요 없다 —
+# tests/ 는 표준 라이브러리만 쓰는 gate/config/dates 와 워크플로 YAML 만 본다.
+pytest>=8.0
+pyyaml>=6.0

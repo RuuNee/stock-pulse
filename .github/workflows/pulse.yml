@@ -19,7 +19,11 @@ jobs:
   pulse:
     runs-on: ubuntu-latest
     steps:
+      # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 최대 2시간 밀려 깨어나므로
+      # 명시적으로 최신 main 을 받아 오래된 데이터 위에 덮어쓰지 않게 한다.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -33,14 +37,4 @@ jobs:
 
       - name: Commit data
         run: |
-          git config user.name "stock-pulse-bot"
-          git config user.email "actions@github.com"
-          git add data/
-          if git diff --cached --quiet; then
-            echo "no data changes"
-          else
-            git commit -m "chore(data): pulse $(date -u +'%Y-%m-%d %H:%M UTC')"
-            for i in 1 2 3; do
-              git pull --rebase --autostash origin main && git push && break || sleep 5
-            done
-          fi
+          bash .github/scripts/commit-data.sh "chore(data): pulse $(date -u +'%Y-%m-%d %H:%M UTC')"

@@ -18,7 +18,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 최대 3시간 밀려 깨어나므로
+      # 명시적으로 최신 main 을 받아 오래된 데이터 위에 덮어쓰지 않게 한다.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -33,19 +37,8 @@ jobs:
           SITE_URL: ${{ vars.SITE_URL }}
         run: python -m pipeline.run sync
 
+      # 이 잡은 26분쯤 걸려서 그 사이 main 이 움직일 확률이 가장 높다.
+      # 충돌 처리 근거는 .github/scripts/commit-data.sh 주석 참고.
       - name: Commit data
         run: |
-          git config user.name "stock-pulse-bot"
-          git config user.email "actions@github.com"
-          git add data/
-          if git diff --cached --quiet; then
-            echo "no data changes"
-          else
-            git commit -m "chore(data): sync $(date -u +'%Y-%m-%d %H:%M UTC')"
-            # 이 잡은 26분쯤 걸려서 그 사이 main 이 움직일 확률이 가장 높다.
-            # 단발 push 로 두었다가 2026-07-27 에 실제로 rejected 나면서
-            # 25분치 재계산 결과를 통째로 날렸다. 다른 워크플로와 동일하게 재시도한다.
-            for i in 1 2 3; do
-              git pull --rebase --autostash origin main && git push && break || sleep 5
-            done
-          fi
+          bash .github/scripts/commit-data.sh "chore(data): sync $(date -u +'%Y-%m-%d %H:%M UTC')"

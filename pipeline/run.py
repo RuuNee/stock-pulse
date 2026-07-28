@@ -3,6 +3,8 @@
     python -m pipeline.run doctor              # health-check data sources
     python -m pipeline.run sync                # rebuild all site data
     python -m pipeline.run sync --market KR    # one market only
+    python -m pipeline.run pulse               # light macro + news refresh
+    python -m pipeline.run gate --market KR    # true/false: send the brief now?
     python -m pipeline.run brief --market KR --dry-run
     python -m pipeline.run brief --market KR --send
     python -m pipeline.run telegram-whoami [--token ...]
@@ -44,6 +46,7 @@ def _cmd_brief(args) -> int:
     from .util.dates import is_trading_day, next_session_date
 
     markets = _markets(args.market)
+    failed = []
     for market in markets:
         session = next_session_date(market)
         if not is_trading_day(market, session):
@@ -65,10 +68,28 @@ def _cmd_brief(args) -> int:
         if args.send:
             ok = telegram.send(message)
             log.ok(f"{market} 전송 {'성공' if ok else '실패'}")
+            if not ok:
+                failed.append(market)
         else:
             print("\n" + "=" * 50)
             print(message)
             print("=" * 50 + "\n")
+
+    # 조용한 실패가 제일 나쁘다. 발송이 깨지면 워크플로도 빨갛게 실패시켜서
+    # 다음 슬롯이 다시 시도하고(브리핑 파일이 커밋되지 않으므로) 알림도 뜬다.
+    if failed:
+        log.err(f"텔레그램 발송 실패: {', '.join(failed)}")
+        return 1
+    return 0
+
+
+def _cmd_gate(args) -> int:
+    """워크플로가 부르는 판정기. stdout 에는 true/false 만, 이유는 stderr 로."""
+    from .gate import decide
+
+    run, reason = decide(args.market, force=args.force)
+    print(reason, file=sys.stderr)
+    print("true" if run else "false")
     return 0
 
 
@@ -123,6 +144,11 @@ def main(argv=None) -> int:
     p_brief.add_argument("--dry-run", action="store_true", help="print only (default)")
     p_brief.add_argument("--rebuild", action="store_true", help="rebuild data before briefing")
     p_brief.set_defaults(func=_cmd_brief)
+
+    p_gate = sub.add_parser("gate", help="print true/false — should this slot send the brief?")
+    p_gate.add_argument("--market", required=True, help="KR | US")
+    p_gate.add_argument("--force", action="store_true", help="manual run — skip time/dup checks")
+    p_gate.set_defaults(func=_cmd_gate)
 
     p_doc = sub.add_parser("doctor", help="check data sources")
     p_doc.set_defaults(func=_cmd_doctor)

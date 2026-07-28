@@ -25,6 +25,19 @@ ET = ZoneInfo("America/New_York")
 SITE_URL = os.getenv("SITE_URL", "https://stock-pulse-kappa-eight.vercel.app")
 
 # --------------------------------------------------------------------------
+# Brief 발송 창 (현지 시각)
+#
+# GitHub Actions 의 cron 은 "이 시각 이후 언젠가"라는 뜻이다. 이 저장소 실측
+# 지연은 6~202분으로 널뛴다. 그래서 워크플로는 슬롯을 여러 개 예약해 두고,
+# 실제로 깨어난 시각이 아래 창 안일 때만 발송한다 (pipeline/gate.py).
+#
+# 창 = 개장 75분 전 ~ 20분 전. 브리핑 생성이 1~3분이므로 도착은 개장 17~72분
+# 전이 되고, 정상적인 지연 구간에서는 30분 전 근처에 떨어진다.
+# --------------------------------------------------------------------------
+MARKET_OPEN = {"KR": "09:00", "US": "09:30"}      # 현지 시각 (KST / ET)
+BRIEF_WINDOW = {"KR": ("07:45", "08:40"), "US": ("08:15", "09:10")}
+
+# --------------------------------------------------------------------------
 # Universe
 #
 # (code, display name, exchange, [aliases used for news matching])
@@ -273,8 +286,8 @@ MACRO_SYMBOLS: list[dict] = [
 # --------------------------------------------------------------------------
 FEEDS: dict[str, dict] = {
     # ---- 국장 ----
-    "yna_market": {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/market.xml",
-                   "market": "KR", "weight": 1.0},
+    # yna_market(https://www.yna.co.kr/rss/market.xml)은 2026-07-28 재점검에서
+    # 빈 응답만 돌려주어 제거했다. 같은 매체의 economy 피드가 대체한다.
     "yna_economy": {"name": "연합뉴스", "url": "https://www.yna.co.kr/rss/economy.xml",
                     "market": "KR", "weight": 0.95},
     "hankyung_finance": {"name": "한국경제", "url": "https://www.hankyung.com/feed/finance",
