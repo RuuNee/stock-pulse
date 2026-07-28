@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .config import BRIEF_WINDOW
 from .gate import brief_path, decide, local_now, next_send, window
 from .util.dates import next_session_date
 
@@ -31,10 +30,11 @@ def report(markets: tuple[str, ...] = ("KR", "US")) -> str:
 def _market_block(market: str) -> list[str]:
     now = local_now(market)
     tz = _TZ_LABEL[market]
-    session = next_session_date(market)
+    session = next_session_date(market, now)
     path = brief_path(market, session)
     start, end = window(market)
-    run, reason = decide(market)
+    # 같은 `now` 를 넘긴다 — 따로 읽으면 분 경계에서 표시 시각과 판정 근거가 어긋난다.
+    run, reason = decide(market, now=now)
 
     out = [
         f"[{market}]  세션 {session} ({WEEKDAY_KR[session.weekday()]})"
@@ -72,7 +72,4 @@ def _upcoming_line(upcoming: tuple[datetime, datetime], now: datetime, tz: str) 
 
 def run(markets: tuple[str, ...] = ("KR", "US")) -> int:
     print(report(markets))
-    # 창 계산이 어긋나 있으면(BRIEF_WINDOW 오타 등) 여기서 드러난다.
-    for market in markets:
-        assert market.upper() in BRIEF_WINDOW
     return 0
