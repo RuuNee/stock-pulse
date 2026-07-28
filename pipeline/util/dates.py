@@ -26,6 +26,17 @@ US_HOLIDAYS_2026 = {
     "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
 }
 
+# 연도별로 나눠 둔다. 표가 없는 해는 "주말만 거르고 평일은 전부 개장"으로 동작하므로,
+# 해가 바뀌면 공휴일에 브리핑이 나간다. 조용히 틀리지 않도록 doctor 가 커버 범위를
+# 점검한다(`holiday_coverage_gap`). 새 해 목록을 넣을 때는 아래 dict 에 추가하면 된다.
+#
+# 여기서 막지 않고 흘려보내는 쪽을 택한 이유: 표가 없다고 발송을 멈추면 그 해 브리핑이
+# 통째로 사라진다. 휴장일 몇 번 더 나가는 쪽이 낫다.
+HOLIDAYS: dict[str, dict[int, set[str]]] = {
+    "KR": {2026: KR_HOLIDAYS_2026},
+    "US": {2026: US_HOLIDAYS_2026},
+}
+
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -80,9 +91,21 @@ def next_session_date(market: str, now: datetime | None = None) -> date:
 def is_trading_day(market: str, d: date) -> bool:
     if d.weekday() >= 5:
         return False
-    key = d.isoformat()
-    holidays = KR_HOLIDAYS_2026 if market == "KR" else US_HOLIDAYS_2026
-    return key not in holidays
+    holidays = HOLIDAYS.get(market, {}).get(d.year)
+    if holidays is None:
+        return True   # 표가 없는 해 — 주말만 거른다. doctor 가 이 상태를 경고한다.
+    return d.isoformat() not in holidays
+
+
+def holiday_coverage_gap(market: str, through: date | None = None) -> list[int]:
+    """`through`(기본: 오늘부터 1년 뒤)까지 중 휴장일 표가 없는 연도.
+
+    비어 있지 않으면 그 해 공휴일에 브리핑이 나간다는 뜻이다.
+    """
+    start = now_kst().date() if market == "KR" else now_et().date()
+    through = through or date(start.year + 1, start.month, start.day)
+    covered = HOLIDAYS.get(market, {})
+    return [y for y in range(start.year, through.year + 1) if y not in covered]
 
 
 def days_ago(n: int) -> datetime:

@@ -65,6 +65,19 @@ def run() -> int:
     us_probe = news.fetch_ticker_news({"code": "AAPL", "name": "Apple", "market": "US"})
     log.ok(f"Google News(국장) {len(kr_probe)}건 / Yahoo(미장) {len(us_probe)}건")
 
+    log.step("휴장일 표")
+    from .util.dates import HOLIDAYS, holiday_coverage_gap
+    for market in ("KR", "US"):
+        gap = holiday_coverage_gap(market)
+        years = sorted(HOLIDAYS.get(market, {}))
+        if gap:
+            # `failures` 로 세지 않는다 — 데이터 소스가 죽은 게 아니라 사람이 채울 표다.
+            # 마지막 줄이 "정상"인데 위에 ✗ 가 뜨면 헷갈리므로 경고로 남긴다.
+            log.warn(f"{market}: {gap} 년 휴장일 목록 없음 → 그 해 공휴일에도 브리핑이 나갑니다")
+            log.warn(f"  → pipeline/util/dates.py 의 HOLIDAYS['{market}'] 에 추가하세요")
+        else:
+            log.ok(f"{market}: {years} 년 커버")
+
     log.step("시크릿")
     log.ok(f"GEMINI_API_KEY: {'있음 (LLM 요약·번역 활성)' if gemini_key() else '없음 (규칙 기반 폴백, 번역 없음)'}")
     log.ok(f"TELEGRAM_BOT_TOKEN: {'있음' if telegram_token() else '없음'}")

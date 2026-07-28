@@ -7,7 +7,7 @@
 ## ✨ 핵심 기능
 
 - **차트-뉴스 연동** ⭐ — 급등/급락/거래량폭발일을 자동 탐지하고, 그날 전후 뉴스를 매칭해 Claude가 원인을 2~3문장으로 해설. 차트 마커를 누르면 바로 확인.
-- **장전 텔레그램 브리핑** — 매일 국장 07:30 / 미장 21:30(KST)에 3줄 요약 + 주요 뉴스(왜 중요한지 한 줄 해설 포함)를 휴대폰으로 발송.
+- **장전 텔레그램 브리핑** — 매일 **개장 20~75분 전**(국장 07:45~08:40 KST / 미장 08:15~09:10 ET)에 3줄 요약 + 주요 뉴스(왜 중요한지 한 줄 해설 포함)를 휴대폰으로 발송. GitHub 스케줄러가 예약보다 최대 3시간 늦게 깨우기 때문에, 40분 간격 슬롯을 여러 개 두고 실제 시각이 발송 창 안인 슬롯 하나만 발송한다 ([설계](md파일/10-전체기술스펙.md) §9.1.1).
 - **시장 대시보드** — 지수·환율·금리·유가·VIX 매크로, 섹터 히트맵, 등락 상위, 시장 분위기 신호등.
 - **초보자 배려** — 용어 툴팁 사전, 초보모드(고급 지표 숨김), 한국식 색상(상승 빨강/하락 파랑), 사람 말로 바꾼 숫자.
 
@@ -18,7 +18,8 @@ pipeline/   Python 데이터 파이프라인 (수집 → 이벤트 탐지 → LL
 web/        React + Vite + lightweight-charts 프론트엔드
 data/       생성된 정적 JSON (GitHub Actions가 커밋)
 md파일/     설계 문서 (계획·데이터소스·스키마·UIUX·알림·운영)
-.github/    cron 워크플로 (brief-kr, brief-us, data-sync)
+.github/    cron 워크플로 (brief-kr, brief-us, data-sync, pulse) + test
+tests/      pytest — 발송 슬롯 커버리지·게이트 판정·워크플로 YAML·문서 드리프트
 ```
 
 서버 0원 아키텍처: 파이프라인이 JSON을 만들어 레포에 커밋하고, 웹은 그걸 fetch한다. 배치는 GitHub Actions, 웹은 Vercel 무료 티어.
@@ -31,6 +32,10 @@ pip install -r requirements.txt
 python -m pipeline.run doctor              # 데이터 소스 헬스체크
 python -m pipeline.run sync                # 전체 데이터 생성 → data/
 python -m pipeline.run brief --market KR --dry-run
+
+# 테스트
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests -q
 
 # 웹 (data/ 를 자동 복사해서 서빙)
 cd web && npm install && npm run dev
