@@ -26,6 +26,23 @@ except Exception:
 from .util import log
 
 
+def _force_utf8_output() -> None:
+    """stdout/stderr 를 UTF-8 로 고정한다.
+
+    윈도우 기본 인코딩(cp949)은 '—' 같은 문자를 담지 못한다. 콘솔에 직접 찍을 때는
+    파이썬이 UTF-16 경로를 쓰므로 티가 안 나지만, 파일이나 파이프로 넘기는 순간
+    stdout 이 cp949 로 떨어지면서 UnicodeEncodeError 로 죽는다. `status > 로그.txt`
+    처럼 결과를 남겨 두는 게 흔한 사용법이라 여기서 막는다.
+
+    `util/log.py` 의 ascii 폴백은 한글을 전부 '?' 로 뭉개므로 최후 수단이다.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass   # 재설정을 지원하지 않는 스트림 — log.py 폴백에 맡긴다
+
+
 def _cmd_sync(args) -> int:
     from .build import site_data
     markets = _markets(args.market)
@@ -133,6 +150,7 @@ def _markets(value: str | None) -> tuple[str, ...]:
 
 
 def main(argv=None) -> int:
+    _force_utf8_output()
     parser = argparse.ArgumentParser(prog="pipeline.run", description="Stock Pulse pipeline")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

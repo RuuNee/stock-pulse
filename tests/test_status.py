@@ -8,11 +8,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import os
+import subprocess
+import sys
+from datetime import datetime, timedelta
 
 import pytest
 
-from pipeline.config import ET, KST
+from pipeline.config import ET, KST, ROOT
 from pipeline.gate import next_send
 from pipeline import status
 
@@ -78,3 +81,51 @@ def test_report_covers_both_markets():
     for label in ("브리핑 파일", "발송 창", "게이트", "다음 발송"):
         got = [ln for ln in lines if ln.startswith(f"  {label}")]
         assert len(got) == 2, f"{label} 가 시장마다 한 줄씩 나와야 합니다: {got}"
+
+
+# --------------------------------------------------------------------------
+# 로컬 트리가 낡았을 때의 경고
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("behind", [0, None])
+def test_no_warning_when_up_to_date(behind):
+    assert status.lag_lines(behind, timedelta(hours=3)) == []
+
+
+def test_warns_with_commit_count_and_fetch_age():
+    head, detail, blank = status.lag_lines(4, timedelta(hours=6))
+    assert "4커밋 뒤" in head and "6시간 전" in head
+    assert "git pull" in detail   # 무엇을 하라는지 없으면 경고가 쓸모없다
+    assert blank == ""
+
+
+def test_warns_without_fetch_age_when_never_fetched():
+    head, _, _ = status.lag_lines(2, None)
+    assert "2커밋 뒤" in head and "fetch" not in head
+
+
+@pytest.mark.parametrize("delta,expected", [
+    (timedelta(minutes=0), "0분 전"),
+    (timedelta(minutes=59), "59분 전"),
+    (timedelta(minutes=60), "1시간 전"),
+    (timedelta(hours=23, minutes=59), "23시간 전"),
+    (timedelta(days=3), "3일 전"),
+    (timedelta(seconds=-30), "0분 전"),   # 시계가 뒤로 튀어도 음수는 안 찍는다
+])
+def test_ago_wording(delta, expected):
+    assert status._ago(delta) == expected
+
+
+def test_status_survives_a_cp949_stdout():
+    """리다이렉트하면 stdout 이 윈도우 기본 인코딩으로 떨어진다.
+
+    리포트에는 '—' 가 늘 들어가는데 cp949 로는 못 담는다. 예전에는 여기서
+    UnicodeEncodeError 로 죽어서, "왜 브리핑이 안 왔지"를 보려고 만든 명령이
+    정작 결과를 파일로 남기려는 순간 못 쓰게 됐다.
+    """
+    done = subprocess.run(
+        [sys.executable, "-m", "pipeline.run", "status"],
+        cwd=ROOT, capture_output=True,
+        env={**os.environ, "PYTHONIOENCODING": "cp949"},
+    )
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    assert "—" in done.stdout.decode("utf-8")

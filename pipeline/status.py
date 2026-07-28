@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import subprocess
+from datetime import datetime, timedelta
 
+from .config import ROOT
 from .gate import brief_path, decide, local_now, next_send, window
 from .util.dates import next_session_date
 
@@ -20,7 +22,7 @@ _TZ_LABEL = {"KR": "KST", "US": "ET"}
 
 
 def report(markets: tuple[str, ...] = ("KR", "US")) -> str:
-    lines: list[str] = []
+    lines = lag_lines(git_behind(), fetch_age())
     for market in markets:
         lines.extend(_market_block(market.upper()))
         lines.append("")
@@ -68,6 +70,62 @@ def _upcoming_line(upcoming: tuple[datetime, datetime], now: datetime, tz: str) 
     hours, minutes = divmod(int(delta.total_seconds()) // 60, 60)
     ago = f"{hours}시간 {minutes}분 뒤" if hours else f"{minutes}분 뒤"
     return f"{when} ({ago})"
+
+
+# --------------------------------------------------------------------------
+# 로컬 트리가 낡았는지
+#
+# 브리핑 파일 유무는 로컬 `data/` 를 보고 판정한다. 발송은 GitHub Actions 에서
+# 일어나고 워크플로가 브리핑을 main 에 커밋하므로, `git pull` 을 안 한 상태에서는
+# 이미 나간 브리핑도 "없음" 으로 보인다. 2026-07-28 미장 브리핑이 실제로 그랬다 —
+# 원격에는 있는데 로컬이 4커밋 뒤처져 미발송처럼 보였다.
+# --------------------------------------------------------------------------
+def lag_lines(behind: int | None, fetched_ago: timedelta | None) -> list[str]:
+    """뒤처져 있으면 경고 블록, 아니면 빈 리스트."""
+    if not behind:
+        return []
+    when = f", 마지막 fetch {_ago(fetched_ago)}" if fetched_ago is not None else ""
+    return [
+        f"! 로컬이 origin/main 보다 {behind}커밋 뒤{when}",
+        "  아래 '브리핑 파일 없음' 이 미발송이 아닐 수 있습니다 — git pull 후 다시 보세요",
+        "",
+    ]
+
+
+def git_behind() -> int | None:
+    """origin/main 보다 몇 커밋 뒤인지. 네트워크는 타지 않는다 — 마지막 fetch 기준.
+
+    그래서 `fetch_age()` 를 같이 보여 준다. fetch 자체가 오래됐으면 이 수치도
+    낡은 것이고, 0 이라고 최신이라는 뜻이 아니다.
+    """
+    out = _git("rev-list", "--count", "HEAD..origin/main")
+    return int(out) if out and out.isdigit() else None
+
+
+def fetch_age() -> timedelta | None:
+    """마지막 `git fetch`/`pull` 이후 경과 시간."""
+    try:
+        stamp = (ROOT / ".git" / "FETCH_HEAD").stat().st_mtime
+    except OSError:
+        return None   # 한 번도 fetch 안 했거나 .git 이 파일(워크트리)
+    return datetime.now() - datetime.fromtimestamp(stamp)
+
+
+def _git(*args: str) -> str | None:
+    try:
+        done = subprocess.run(("git", *args), cwd=ROOT, capture_output=True,
+                              text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None   # git 이 없거나 저장소가 아님 — 경고를 생략한다
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _ago(delta: timedelta) -> str:
+    minutes = max(0, int(delta.total_seconds()) // 60)
+    if minutes < 60:
+        return f"{minutes}분 전"
+    hours, _ = divmod(minutes, 60)
+    return f"{hours}시간 전" if hours < 24 else f"{hours // 24}일 전"
 
 
 def run(markets: tuple[str, ...] = ("KR", "US")) -> int:
