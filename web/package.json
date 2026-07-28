@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "copy-data": "node scripts/copy-data.mjs",
-    "predev": "npm run copy-data",
     "dev": "vite",
     "prebuild": "npm run copy-data",
     "build": "tsc -b && vite build",

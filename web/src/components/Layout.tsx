@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useSettings } from "../lib/settings";
 import SearchButton from "./Search";
+import StaleBanner from "./StaleBanner";
 
 const NAV = [
   { to: "/", label: "홈", icon: "🏠", end: true },
@@ -47,7 +48,11 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-4 pb-24 md:pb-8">{children}</main>
+        {/* 페이지가 아니라 데이터 전체가 낡은 상태라 레이아웃에 둔다 — 어느 화면에서도 보인다. */}
+        <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-4 pb-24 md:pb-8">
+          <StaleBanner />
+          {children}
+        </main>
       </div>
 
       {/* mobile bottom tab bar */}
