@@ -8,6 +8,15 @@ import type { Brief as BriefT, Market } from "../lib/types";
 export default function Brief() {
   const [market, setMarket] = useState<Market>("KR");
   const { data, loading, error } = useAsync(() => api.brief(market), [market]);
+  // 브리핑과 따로 받는다 — manifest 를 못 읽어도 브리핑은 그대로 보여야 한다.
+  const { data: manifest } = useAsync(() => api.manifest(), []);
+
+  // 파이프라인이 계산해 둔 "이번에 브리핑이 나가야 할 장" 날짜. 휴장일 판정이
+  // 이미 반영돼 있으므로 웹에서 거래일 계산을 다시 할 필요가 없다.
+  const expected = manifest?.markets?.[market]?.briefDate;
+  // 문자열 비교로 충분하다 (YYYY-MM-DD). manifest 쪽이 더 오래됐을 땐 알리지 않는다 —
+  // 헛경보가 침묵보다 나쁘다.
+  const staleFor = data && expected && data.date < expected ? expected : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -25,7 +34,25 @@ export default function Brief() {
           아직 브리핑이 생성되지 않았습니다. 매일 장 시작 전에 자동으로 만들어집니다.
         </div>
       )}
+      {staleFor && <StaleNotice expected={staleFor} />}
       {data && <BriefBody brief={data} />}
+    </div>
+  );
+}
+
+/** 오늘 브리핑이 아직 안 만들어졌을 때. 예전 브리핑을 아무 표시 없이 보여주면
+ *  사용자가 날짜를 직접 대조해야 한다 — 2026-07-28 에 실제로 그랬다. */
+function StaleNotice({ expected }: { expected: string }) {
+  return (
+    <div
+      className="card p-3 text-sm leading-relaxed"
+      style={{ borderColor: "var(--warn, #b45309)", background: "var(--surface-2)" }}
+      role="status"
+    >
+      ⏳ <b>{fmtDateKr(expected)} 브리핑은 아직 준비 중이에요.</b>
+      <div className="mt-1" style={{ color: "var(--muted)" }}>
+        아래는 그 전 장의 브리핑입니다. 장 시작 전에 자동으로 새로 만들어집니다.
+      </div>
     </div>
   );
 }

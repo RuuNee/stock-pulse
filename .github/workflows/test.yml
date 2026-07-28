@@ -34,7 +34,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # 테스트는 파이프라인 무거운 의존성 없이 도는 부분만 검증한다.
-      - run: pip install -r requirements-dev.txt
+      # tests/test_manifest.py 가 build.site_data 를 임포트하고, 그 체인이 pandas 를
+      # 끌어온다. 수집 함수는 전부 스텁이라 네트워크는 타지 않지만 임포트는 실물이다.
+      - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: bash -n .github/scripts/commit-data.sh
       - run: python -m pytest tests -q

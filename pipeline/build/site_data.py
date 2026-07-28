@@ -168,6 +168,16 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     manifest = io.read_json(DATA_DIR / "manifest.json", {}) or {}
     manifest["generatedAt"] = iso(started)
     manifest["generatedAtKst"] = now_kst().strftime("%Y-%m-%d %H:%M")
+    # `briefDate`는 웹이 "오늘 브리핑이 아직 안 나왔다"를 판단하는 기준값이다.
+    # full sync(하루 2회)에서만 갱신하면 반나절씩 옛 날짜가 남아 웹이 낡은 브리핑을
+    # 최신인 것처럼 보여준다. 2시간마다 도는 pulse에서 같이 밀어 준다.
+    # `lastTradingDay`는 종목 데이터가 있어야 구하므로 full sync 몫으로 남긴다.
+    blocks = dict(manifest.get("markets") or {})
+    for m in markets:
+        block = dict(blocks.get(m) or {})
+        block["briefDate"] = next_session_date(m).isoformat()
+        blocks[m] = block
+    manifest["markets"] = blocks
     io.write_json(DATA_DIR / "manifest.json", manifest)
 
     log.ok(f"pulse done · {len(macro_indices)} indices, "

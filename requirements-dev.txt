@@ -1,4 +1,5 @@
-# 테스트 전용. 파이프라인 런타임 의존성(requirements.txt)은 필요 없다 —
-# tests/ 는 표준 라이브러리만 쓰는 gate/config/dates 와 워크플로 YAML 만 본다.
+# 테스트 전용. requirements.txt 와 **함께** 설치해야 한다 —
+# tests/test_manifest.py 가 build.site_data 를 임포트하고 그 체인이 pandas 를 끌어온다.
+#   pip install -r requirements.txt -r requirements-dev.txt
 pytest>=8.0
 pyyaml>=6.0
