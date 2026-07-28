@@ -2,7 +2,7 @@
 
 Two tiers:
 
-1. **Market feeds** — 21 verified sources (config.FEEDS) giving the general
+1. **Market feeds** — 19 verified sources (config.FEEDS) giving the general
    国장/미장 news flow.
 2. **Per-ticker feeds** — Yahoo's ticker RSS for US names and Google News
    search for Korean ones. This tier is what makes the chart markers possible;
