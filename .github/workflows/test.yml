@@ -20,6 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # brief-*.yml 의 게이트는 `pip install` 전에, 러너 기본 python3 로 돈다.
+      # gate/config/dates 에 서드파티 import 가 섞이면 브리핑 워크플로가 첫
+      # 스텝에서 죽고 그날 발송이 통째로 빠진다. 그래서 여기서 그 경로를 그대로
+      # 재현한다 — setup-python 보다 먼저, 의존성 설치 없이.
+      - name: 게이트는 표준 라이브러리만으로 돌아야 한다
+        run: |
+          /usr/bin/python3 -m pipeline.run gate --market KR
+          /usr/bin/python3 -m pipeline.run gate --market US
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
