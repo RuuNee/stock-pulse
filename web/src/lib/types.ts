@@ -86,6 +86,61 @@ export interface ChartEvent {
   news: TickerNews[];
 }
 
+// --- 차트 분석 (pipeline/analyze/technical.py) ---
+
+export type Verdict = "bullish" | "bearish" | "neutral";
+export type SignalKey = "strongBuy" | "buy" | "neutral" | "sell" | "strongSell";
+export type ActionKey =
+  | "chase" | "addBuy" | "buy" | "takeProfit"
+  | "reduce" | "stopLoss" | "rebound" | "hold";
+
+export interface TechSignal {
+  key: string;
+  name: string;
+  group: string; // 추세 | 모멘텀 | 변동성 | 수급 | 가격대
+  verdict: Verdict;
+  strength: number; // 0~1
+  weight: number; // 1~3
+  value: string; // 짧은 수치 표기
+  detail: string;
+}
+
+/** 목록·브리핑이 쓰는 압축본 (tickers/index.json). */
+export interface AnalysisBrief {
+  score: number;
+  signal: SignalKey;
+  label: string;
+  action: ActionKey;
+  actionEmoji: string;
+  actionLabel: string;
+  headline: string;
+  date: string;
+}
+
+export interface TickerAnalysis extends AnalysisBrief {
+  actionNote: string;
+  summary: string;
+  trend: {
+    phase: string;
+    direction: "up" | "down" | "flat";
+    slopePct: number | null;
+    label: string;
+    aboveMa60: boolean | null;
+  };
+  counts: { bullish: number; bearish: number; neutral: number };
+  signals: TechSignal[];
+  levels: {
+    support: number | null;
+    resistance: number | null;
+    supportGapPct: number | null;
+    resistanceGapPct: number | null;
+    high52: number | null;
+    low52: number | null;
+  };
+  risk: { atrPct: number | null; band: string };
+  disclaimer: string;
+}
+
 export interface Quote {
   date: string;
   open: number | null;
@@ -133,6 +188,7 @@ export interface TickerIndexEntry {
   spark: number[];
   eventCount: number;
   latestEvent: string | null;
+  analysis?: AnalysisBrief | null;
   date?: string;
 }
 
@@ -148,8 +204,24 @@ export interface TickerDetail {
   quote: Quote;
   ohlcv: { columns: string[]; rows: (string | number)[][] };
   indicators: Record<string, (number | null)[]>;
+  analysis?: TickerAnalysis | null;
   events: ChartEvent[];
   recentNews: NewsItem[];
+}
+
+export interface SignalRef extends AnalysisBrief {
+  code: string;
+  name: string;
+  market: Market;
+  changePct: number | null;
+}
+
+export interface ChartSignals {
+  asOf: string | null;
+  counts: { bullish: number; neutral: number; bearish: number };
+  bullish: SignalRef[];
+  bearish: SignalRef[];
+  note: string;
 }
 
 export interface Brief {
@@ -169,7 +241,15 @@ export interface Brief {
     tickers: { code: string; name: string }[];
     importance?: number;
   }[];
-  watchlistMoves: { code: string; name: string; changePct: number | null; note: string | null }[];
+  chartSignals?: ChartSignals | null;
+  watchlistMoves: {
+    code: string;
+    name: string;
+    changePct: number | null;
+    note: string | null;
+    signal?: string | null;
+    signalEmoji?: string | null;
+  }[];
   calendar: { time: string; title: string; importance: string }[];
   disclaimer: string;
   siteUrl?: string;

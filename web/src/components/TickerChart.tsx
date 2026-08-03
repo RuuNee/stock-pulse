@@ -5,6 +5,7 @@ import {
   LineSeries,
   HistogramSeries,
   createSeriesMarkers,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type SeriesMarker,
@@ -13,14 +14,25 @@ import {
 } from "lightweight-charts";
 import type { ChartEvent, TickerDetail } from "../lib/types";
 import { useSettings } from "../lib/settings";
+import { INDICATOR, type IndicatorStyle } from "../lib/signals";
 import { fmtPrice, fmtVolume } from "../lib/format";
 import ChangeBadge from "./ChangeBadge";
+import Legend from "./LineSwatch";
+
+/** 차트에 겹쳐 그릴 것들. 전부 끄면 순수 캔들만 남는다. */
+export interface Overlays {
+  markers: boolean; // 뉴스 마커
+  ma: boolean; // 이동평균선
+  bb: boolean; // 볼린저밴드
+  macd: boolean; // MACD 보조 패널
+  rsi: boolean; // RSI 보조 패널
+  levels: boolean; // 지지·저항 가격선
+}
 
 interface Props {
   detail: TickerDetail;
   range: number; // trading days to show
-  showMarkers: boolean;
-  showMA: boolean;
+  overlays: Overlays;
   onEventNews: (event: ChartEvent) => void;
 }
 
@@ -36,11 +48,24 @@ interface BarSel {
   event: ChartEvent | null;
 }
 
+// pane 높이는 픽셀이 아니라 **비율**로 정해진다. `pane.setHeight(110)` 은 다음
+// pane 이 추가되는 순간 재분배돼 무시된 것처럼 보인다(실제로 MACD 패널이 27px 로
+// 찌그러졌다). 아래 값을 stretch factor 로 넘겨 비율을 잡고, 컨테이너 높이도 같은
+// 만큼 키워서 가격 패널의 절대 크기가 유지되게 한다.
+const MAIN_PANE_PX = 400;
+const MACD_PANE_PX = 110;
+const RSI_PANE_PX = 90;
+
 function toTime(dateStr: string): UTCTimestamp {
   return (Date.parse(dateStr + "T00:00:00Z") / 1000) as UTCTimestamp;
 }
 
-export default function TickerChart({ detail, range, showMarkers, showMA, onEventNews }: Props) {
+/** 초보 모드는 20일선 하나만. 색은 고급 모드와 **같은 보라**를 쓴다 — 예전에는
+ *  초보 모드만 주황으로 그려서, 도움말의 "보라 20일선"과 화면이 어긋났다. */
+const maKeys = (beginner: boolean) =>
+  (beginner ? ["ma20"] : ["ma5", "ma20", "ma60", "ma120"]) as (keyof typeof INDICATOR)[];
+
+export default function TickerChart({ detail, range, overlays, onEventNews }: Props) {
   const holder = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const s = useSettings();
@@ -60,6 +85,7 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
         background: { color: "transparent" },
         textColor: dark ? "#93a3b8" : "#5b6b82",
         attributionLogo: false,
+        panes: { separatorColor: dark ? "#263449" : "#dbe3ef", separatorHoverColor: "#6366f155" },
       },
       grid: {
         vertLines: { color: dark ? "#1b2740" : "#eef2f9" },
@@ -82,6 +108,13 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
     const rows = detail.ohlcv.rows;
     const startIdx = Math.max(0, rows.length - range);
     const slice = rows.slice(startIdx);
+    const ind = detail.indicators ?? {};
+
+    /** 지표 배열(전체 길이)을 현재 구간에 맞춰 잘라 라인 데이터로. */
+    const lineData = (key: string) =>
+      slice
+        .map((r, i) => ({ time: toTime(r[0] as string), value: ind[key]?.[startIdx + i] }))
+        .filter((p): p is { time: UTCTimestamp; value: number } => p.value != null);
 
     // --- volume (background histogram) ---
     const volSeries = chart.addSeries(HistogramSeries, {
@@ -126,24 +159,111 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
     }
 
     // --- moving averages ---
-    if (showMA) {
-      const maDefs: [string, string][] = s.beginner
-        ? [["ma20", "#f59e0b"]]
-        : [["ma5", "#f59e0b"], ["ma20", "#a855f7"], ["ma60", "#06b6d4"]];
-      for (const [key, color] of maDefs) {
-        const series = detail.indicators[key];
-        if (!series) continue;
-        const maLine = chart.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-        maLine.setData(
-          slice
-            .map((r, i) => ({ time: toTime(r[0] as string), value: series[startIdx + i] }))
-            .filter((p): p is { time: UTCTimestamp; value: number } => p.value != null),
-        );
+    if (overlays.ma) {
+      for (const key of maKeys(s.beginner)) {
+        if (!ind[key]) continue;
+        const maLine = chart.addSeries(LineSeries, {
+          color: INDICATOR[key].color,
+          lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+        });
+        maLine.setData(lineData(key));
       }
     }
 
+    // --- 볼린저밴드: 위·아래 선만 그린다. 중심선은 20일선과 같은 값이라
+    //     이동평균을 켠 상태에서 겹쳐 그리면 화면만 지저분해진다. ---
+    if (overlays.bb && ind.bbUpper && ind.bbLower) {
+      for (const key of ["bbUpper", "bbLower"]) {
+        const band = chart.addSeries(LineSeries, {
+          color: `${INDICATOR.bb.color}99`,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        band.setData(lineData(key));
+      }
+    }
+
+    // --- 지지·저항: 분석이 잡아낸 기준선을 가로줄로 ---
+    if (overlays.levels && detail.analysis) {
+      const { support, resistance } = detail.analysis.levels;
+      if (support != null) {
+        priceSeries.createPriceLine({
+          price: support, color: upC, lineWidth: 1,
+          lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "지지",
+        });
+      }
+      if (resistance != null) {
+        priceSeries.createPriceLine({
+          price: resistance, color: downC, lineWidth: 1,
+          lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "저항",
+        });
+      }
+    }
+
+    // --- 보조 패널: MACD / RSI. 가격과 단위가 달라 별도 pane 에 올린다. ---
+    const paneWeights: number[] = [MAIN_PANE_PX];
+
+    if (overlays.macd && ind.macd && ind.macdSignal) {
+      const pane = chart.addPane();
+      const idx = pane.paneIndex();
+      const hist = chart.addSeries(
+        HistogramSeries,
+        { priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false },
+        idx,
+      );
+      hist.setData(
+        lineData("macdHist").map((p) => ({
+          ...p,
+          color: p.value >= 0 ? `${upC}88` : `${downC}88`,
+        })),
+      );
+      const macdLine = chart.addSeries(
+        LineSeries,
+        { color: INDICATOR.macd.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false },
+        idx,
+      );
+      macdLine.setData(lineData("macd"));
+      const sigLine = chart.addSeries(
+        LineSeries,
+        {
+          color: INDICATOR.macdSignal.color, lineWidth: 1, lineStyle: LineStyle.Dashed,
+          priceLineVisible: false, lastValueVisible: false,
+        },
+        idx,
+      );
+      sigLine.setData(lineData("macdSignal"));
+      paneWeights.push(MACD_PANE_PX);
+    }
+
+    if (overlays.rsi && ind.rsi14) {
+      const pane = chart.addPane();
+      const idx = pane.paneIndex();
+      const rsiLine = chart.addSeries(
+        LineSeries,
+        {
+          color: INDICATOR.rsi.color, lineWidth: 1, priceLineVisible: false,
+          priceFormat: { type: "price", precision: 0, minMove: 1 },
+        },
+        idx,
+      );
+      rsiLine.setData(lineData("rsi14"));
+      for (const [level, color, title] of [[70, downC, "과매수"], [30, upC, "과매도"]] as const) {
+        rsiLine.createPriceLine({
+          price: level, color, lineWidth: 1,
+          lineStyle: LineStyle.Dotted, axisLabelVisible: true, title,
+        });
+      }
+      paneWeights.push(RSI_PANE_PX);
+    }
+
+    if (paneWeights.length > 1) {
+      chart.panes().forEach((p, i) => p.setStretchFactor(paneWeights[i] ?? 1));
+    }
+
     // --- event markers (visual hint only; click detail handled below) ---
-    if (showMarkers) {
+    if (overlays.markers) {
       const firstDate = slice[0]?.[0] as string | undefined;
       const events = detail.events.filter(
         (e) =>
@@ -204,14 +324,27 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
       chartRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail.code, range, showMarkers, showMA, s.beginner, s.theme, s.colorMode]);
+  }, [
+    detail.code, range, s.beginner, s.theme, s.colorMode,
+    overlays.markers, overlays.ma, overlays.bb, overlays.macd, overlays.rsi, overlays.levels,
+  ]);
 
   const upC = s.colorMode === "kr" ? "#e11d48" : "#16a34a";
   const downC = s.colorMode === "kr" ? "#2563eb" : "#dc2626";
+  const extra = (overlays.macd ? MACD_PANE_PX : 0) + (overlays.rsi ? RSI_PANE_PX : 0);
+
+  const priceLegend: IndicatorStyle[] = [
+    ...(overlays.ma ? maKeys(s.beginner).map((k) => INDICATOR[k]) : []),
+    ...(overlays.bb ? [INDICATOR.bb] : []),
+  ];
 
   return (
     <div className="relative w-full">
-      <div ref={holder} className="w-full" style={{ height: "min(52vh, 460px)", minHeight: 260 }} />
+      <div
+        ref={holder}
+        className="w-full"
+        style={{ height: `calc(min(52vh, 460px) + ${extra}px)`, minHeight: 260 + extra }}
+      />
       {sel && (
         <BarDetail
           sel={sel}
@@ -223,7 +356,13 @@ export default function TickerChart({ detail, range, showMarkers, showMA, onEven
           onClose={() => setSel(null)}
         />
       )}
-      {showMarkers && (
+      {/* 켠 지표의 **색 견본**. 이름만 적으면 초보가 화면의 어느 선인지 못 찾는다. */}
+      <Legend items={priceLegend} title="가격" className="mt-2 px-1" />
+      {overlays.macd && (
+        <Legend items={[INDICATOR.macd, INDICATOR.macdSignal]} title="MACD 패널" className="mt-1 px-1" />
+      )}
+      {overlays.rsi && <Legend items={[INDICATOR.rsi]} title="RSI 패널" className="mt-1 px-1" />}
+      {overlays.markers && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 px-1 text-[11px]" style={{ color: "var(--muted)" }}>
           <span style={{ color: upC }}>▲ 급등</span>
           <span style={{ color: downC }}>▼ 급락</span>

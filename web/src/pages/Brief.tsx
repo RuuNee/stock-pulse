@@ -1,9 +1,13 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import ChangeBadge from "../components/ChangeBadge";
+import SignalBadge from "../components/SignalBadge";
+import { useSettings } from "../lib/settings";
 import { fmtDateKr } from "../lib/format";
-import type { Brief as BriefT, Market } from "../lib/types";
+import { toneOf, verdictColor } from "../lib/signals";
+import type { Brief as BriefT, ChartSignals, Market, SignalRef } from "../lib/types";
 
 export default function Brief() {
   const [market, setMarket] = useState<Market>("KR");
@@ -117,13 +121,21 @@ function BriefBody({ brief }: { brief: BriefT }) {
         </section>
       )}
 
+      {brief.chartSignals && <ChartSignalSection cs={brief.chartSignals} />}
+
       {brief.watchlistMoves.length > 0 && (
         <section className="card p-4">
           <h2 className="font-bold mb-2">👀 관심 종목 움직임</h2>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             {brief.watchlistMoves.map((w) => (
-              <div key={w.code} className="flex items-center justify-between text-sm">
-                <span className="truncate">{w.name} {w.note && <span style={{ color: "var(--muted)" }}>· {w.note}</span>}</span>
+              <div key={w.code} className="flex items-center justify-between gap-2 text-sm">
+                <span className="truncate">
+                  {w.name}
+                  {w.signal && (
+                    <span style={{ color: "var(--muted)" }}> · {w.signalEmoji} {w.signal}</span>
+                  )}
+                  {w.note && <span style={{ color: "var(--muted)" }}> · {w.note}</span>}
+                </span>
                 <ChangeBadge pct={w.changePct} size="sm" />
               </div>
             ))}
@@ -133,5 +145,75 @@ function BriefBody({ brief }: { brief: BriefT }) {
 
       <p className="text-xs text-center" style={{ color: "var(--muted)" }}>ℹ️ {brief.disclaimer}</p>
     </div>
+  );
+}
+
+/** 차트 분석 신호 — 뉴스가 아니라 "차트 모양"만 보고 고른 종목들.
+ *  뉴스 섹션과 섞이지 않게 별도 카드로 두고, 근거가 지표뿐이라는 점을 밝힌다. */
+function ChartSignalSection({ cs }: { cs: ChartSignals }) {
+  const { bullish, bearish, counts } = cs;
+  if (!bullish.length && !bearish.length) return null;
+  const total = counts.bullish + counts.neutral + counts.bearish;
+
+  return (
+    <section className="card p-4">
+      <div className="flex items-baseline gap-2 mb-1">
+        <h2 className="font-bold">📊 차트 분석 신호</h2>
+        {cs.asOf && (
+          <span className="text-xs" style={{ color: "var(--muted)" }}>{cs.asOf} 종가 기준</span>
+        )}
+      </div>
+      <p className="text-xs mb-3" style={{ color: "var(--muted)" }}>
+        추적 {total}종목 · 매수 우위 {counts.bullish} · 관망 {counts.neutral} · 매도 우위 {counts.bearish}
+      </p>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        <SignalColumn title="강세 신호" rows={bullish} empty="오늘은 강세 신호가 없습니다." />
+        <SignalColumn title="약세 신호" rows={bearish} empty="오늘은 약세 신호가 없습니다." />
+      </div>
+
+      <p className="mt-3 pt-2.5 border-t text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+        ⚠️ {cs.note}{" "}
+        <Link to="/learn?tab=chart" className="underline" style={{ color: "var(--accent)" }}>
+          기법 설명 보기 →
+        </Link>
+      </p>
+    </section>
+  );
+}
+
+function SignalColumn({ title, rows, empty }: { title: string; rows: SignalRef[]; empty: string }) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold mb-2">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="text-xs" style={{ color: "var(--muted)" }}>{empty}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {rows.map((r) => <SignalRow key={`${r.market}:${r.code}`} r={r} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SignalRow({ r }: { r: SignalRef }) {
+  const s = useSettings();
+  const color = verdictColor(toneOf(r.signal), s);
+  return (
+    <Link
+      to={`/ticker/${r.market}/${r.code}`}
+      className="rounded-xl border p-2.5 block transition"
+      style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-semibold text-sm truncate">{r.name}</span>
+        <span className="ml-auto"><ChangeBadge pct={r.changePct} size="sm" /></span>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+        <SignalBadge a={r} size="sm" />
+      </div>
+      <div className="mt-1.5 text-xs" style={{ color }}>{r.headline}</div>
+    </Link>
   );
 }

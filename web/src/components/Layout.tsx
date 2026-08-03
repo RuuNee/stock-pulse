@@ -28,7 +28,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           {NAV.map((n) => (
             <SideLink key={n.to} {...n} />
           ))}
-          <SideLink to="/learn" label="용어사전" icon="📖" />
+          <SideLink to="/learn" label="도움말" icon="📖" />
         </nav>
         <div className="mt-auto flex flex-col gap-2 text-sm">
           <Toggles />

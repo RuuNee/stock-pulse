@@ -3,11 +3,13 @@ import { useParams, Navigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { useSettings } from "../lib/settings";
-import TickerChart from "../components/TickerChart";
+import TickerChart, { type Overlays } from "../components/TickerChart";
 import ChangeBadge from "../components/ChangeBadge";
 import NewsCard from "../components/NewsCard";
 import Term from "../components/Term";
 import UpdateTip from "../components/UpdateTip";
+import AnalysisCard from "../components/AnalysisCard";
+import SignalBadge from "../components/SignalBadge";
 import { fmtMarcap, fmtPrice, fmtVolume, volLabel } from "../lib/format";
 import type { ChartEvent, Market as Mkt, TickerDetail } from "../lib/types";
 
@@ -17,6 +19,17 @@ const RANGES: { label: string; days: number }[] = [
   { label: "6개월", days: 132 },
   { label: "1년", days: 252 },
   { label: "2년", days: 500 },
+];
+
+// 차트 위에 켤 수 있는 것들. 기본값은 초보자가 처음 열었을 때의 화면 —
+// 뉴스 마커와 지지·저항선만 켜 두고, 선이 많아지는 지표는 직접 켜게 한다.
+const OVERLAY_CHIPS: { key: keyof Overlays; label: string; hint: string }[] = [
+  { key: "markers", label: "📍 뉴스 마커", hint: "급등락일에 마커를 찍습니다" },
+  { key: "ma", label: "이동평균", hint: "5·20·60·120일 평균선" },
+  { key: "bb", label: "볼린저", hint: "20일 평균 ±2σ 통로" },
+  { key: "macd", label: "MACD", hint: "추세 전환을 보는 보조 패널" },
+  { key: "rsi", label: "RSI", hint: "과열·침체를 보는 보조 패널" },
+  { key: "levels", label: "지지·저항", hint: "분석이 잡은 기준선을 가로줄로" },
 ];
 
 const CONF: Record<string, [string, string]> = {
@@ -33,8 +46,9 @@ export default function Ticker() {
   const { data, loading, error } = useAsync(() => api.ticker(m, code), [m, code]);
   const s = useSettings();
   const [range, setRange] = useState(132);
-  const [showMarkers, setShowMarkers] = useState(true);
-  const [showMA, setShowMA] = useState(false);
+  const [overlays, setOverlays] = useState<Overlays>({
+    markers: true, ma: false, bb: false, macd: false, rsi: false, levels: true,
+  });
   const [active, setActive] = useState<string | null>(null);
   const [watched, setWatched] = useState(() => isWatched(m, code));
   const eventRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -68,6 +82,11 @@ export default function Ticker() {
           <div className="text-xs mt-1" style={{ color: "var(--muted)" }}>
             <Term k="volume">거래량</Term> {fmtVolume(q.volume)} ({volLabel(q.volumeVsAvg20)})
           </div>
+          {d.analysis && (
+            <div className="mt-2">
+              <SignalBadge a={d.analysis} />
+            </div>
+          )}
         </div>
         <button
           onClick={() => setWatched(toggleWatch(d.market, d.code))}
@@ -79,37 +98,47 @@ export default function Ticker() {
         </button>
       </div>
 
-      {/* range + toggles */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1.5">
-          {RANGES.map((r) => (
+      {/* range */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {RANGES.map((r) => (
+          <button
+            key={r.days}
+            className={`chip ${range === r.days ? "active" : ""}`}
+            onClick={() => setRange(r.days)}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 지표 토글 — 줄이 넘치면 가로 스크롤 (모바일에서 칩이 6개다) */}
+      <div className="scroll-x -mx-1 px-1">
+        <div className="flex gap-1.5 w-max">
+          {OVERLAY_CHIPS.map((c) => (
             <button
-              key={r.days}
-              className={`chip ${range === r.days ? "active" : ""}`}
-              onClick={() => setRange(r.days)}
+              key={c.key}
+              className={`chip ${overlays[c.key] ? "active" : ""}`}
+              onClick={() => setOverlays((o) => ({ ...o, [c.key]: !o[c.key] }))}
+              aria-pressed={overlays[c.key]}
+              title={c.hint}
             >
-              {r.label}
+              {c.label}
             </button>
           ))}
-        </div>
-        <div className="flex gap-1.5 ml-auto">
-          <button className={`chip ${showMarkers ? "active" : ""}`} onClick={() => setShowMarkers((v) => !v)}>
-            📍 뉴스 마커
-          </button>
-          <button className={`chip ${showMA ? "active" : ""}`} onClick={() => setShowMA((v) => !v)}>
-            <Term k="ma">이동평균</Term>
-          </button>
         </div>
       </div>
 
       {/* chart */}
       <div className="card p-2 pt-3">
-        <TickerChart detail={d} range={range} showMarkers={showMarkers} showMA={showMA} onEventNews={jumpToEvent} />
+        <TickerChart detail={d} range={range} overlays={overlays} onEventNews={jumpToEvent} />
       </div>
       {/* 장중에 보면 오늘 봉이 없다 — 왜 그런지 여기서 바로 답한다. */}
       <p className="text-xs -mt-1" style={{ color: "var(--muted)" }}>
         <UpdateTip />
       </p>
+
+      {/* ⭐ 차트 분석 — 위 차트에서 읽어낸 것을 말로 옮긴다 */}
+      {d.analysis && <AnalysisCard a={d.analysis} currency={d.currency} />}
 
       {/* quote stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
