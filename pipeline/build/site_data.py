@@ -253,6 +253,10 @@ def _translate_ticker_news(details: list[dict]) -> None:
 
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     df = prices.fetch_ohlcv(meta["code"])
+    # 정기 실행(07:30·21:30 UTC)은 양 시장이 다 닫힌 시각이라 안 걸리지만,
+    # 수동 dispatch 는 장중에 돌 수 있다. 그때 진행 중인 봉이 종가로 들어가면
+    # 차트 분석 신호까지 그 값으로 계산된다.
+    df = prices.drop_unclosed(df, meta["market"])
     if df is None or df.empty:
         return None
 

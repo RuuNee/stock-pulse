@@ -4,12 +4,15 @@ import { useSettings } from "../lib/settings";
 import SearchButton from "./Search";
 import StaleBanner from "./StaleBanner";
 
+// 하단 탭바와 사이드바가 같은 목록을 쓴다. 따로 두면 한쪽에만 항목이 생긴다 —
+// 실제로 도움말이 사이드바에만 있어서 모바일에서는 열 방법이 아예 없었다.
 const NAV = [
   { to: "/", label: "홈", icon: "🏠", end: true },
   { to: "/market/KR", label: "국장", icon: "🇰🇷" },
   { to: "/market/US", label: "미장", icon: "🇺🇸" },
   { to: "/news", label: "뉴스", icon: "📰" },
   { to: "/brief", label: "브리핑", icon: "📌" },
+  { to: "/learn", label: "도움말", icon: "📖" },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -28,7 +31,6 @@ export default function Layout({ children }: { children: ReactNode }) {
           {NAV.map((n) => (
             <SideLink key={n.to} {...n} />
           ))}
-          <SideLink to="/learn" label="도움말" icon="📖" />
         </nav>
         <div className="mt-auto flex flex-col gap-2 text-sm">
           <Toggles />
@@ -57,7 +59,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       {/* mobile bottom tab bar */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-20 grid grid-cols-5 border-t"
+        className="md:hidden fixed bottom-0 inset-x-0 z-20 grid grid-cols-6 border-t"
         style={{ borderColor: "var(--border)", background: "var(--surface)", paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {NAV.map((n) => (
@@ -100,7 +102,8 @@ function TabLink({ to, label, icon, end }: { to: string; label: string; icon: st
     <NavLink
       to={to}
       end={end}
-      className="flex flex-col items-center justify-center gap-0.5 py-2 text-[11px]"
+      // 6칸이 되면서 한 칸이 좁아졌다. min-w-0 이 없으면 라벨이 칸을 밀어낸다.
+      className="flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] min-w-0 truncate"
       style={({ isActive }) => ({ color: isActive ? "var(--accent)" : "var(--muted)" })}
     >
       <span className="text-lg leading-none">{icon}</span>

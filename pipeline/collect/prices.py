@@ -13,6 +13,7 @@ import pandas as pd
 
 from ..config import HISTORY_YEARS
 from ..util import log
+from ..util.dates import session_closed
 
 _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
@@ -82,6 +83,26 @@ def _num(value) -> float | None:
     value = float(value)
     # Korean prices are whole won; US prices need cents.
     return round(value, 4)
+
+
+def drop_unclosed(df: pd.DataFrame | None, market: str) -> pd.DataFrame | None:
+    """아직 안 끝난 세션의 마지막 봉을 떨군다.
+
+    FinanceDataReader 는 장중에도 "오늘" 행을 준다. 그 값은 지금 이 순간의
+    스냅샷이지 종가가 아니다. 이걸 그대로 실으면 사이트가 "마감 기준"이라고
+    써 놓고 2시간마다 달라지는 숫자를 보여주게 된다 — 2026-08-03 에 실제로
+    신고된 증상이다. 미장 개장 18분 만에 소스가 이미 그날 봉을 주고 있었다.
+
+    한 줄만 떨구는 이유: 소스가 미래 날짜를 주는 경우는 없고, 두 줄 이상
+    진행 중인 경우도 없다. 방어적으로 반복하면 정상 데이터를 갉아먹는다.
+    """
+    if df is None or df.empty:
+        return df
+    last_day = df.index[-1].date()
+    if session_closed(market, last_day):
+        return df
+    trimmed = df.iloc[:-1]
+    return trimmed if not trimmed.empty else None
 
 
 def quote_from(df: pd.DataFrame) -> dict:

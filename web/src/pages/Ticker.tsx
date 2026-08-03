@@ -134,7 +134,7 @@ export default function Ticker() {
       </div>
       {/* 장중에 보면 오늘 봉이 없다 — 왜 그런지 여기서 바로 답한다. */}
       <p className="text-xs -mt-1" style={{ color: "var(--muted)" }}>
-        <UpdateTip />
+        <UpdateTip align="left" />
       </p>
 
       {/* ⭐ 차트 분석 — 위 차트에서 읽어낸 것을 말로 옮긴다 */}

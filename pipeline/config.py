@@ -37,6 +37,17 @@ SITE_URL = os.getenv("SITE_URL", "https://stock-pulse-kappa-eight.vercel.app")
 MARKET_OPEN = {"KR": "09:00", "US": "09:30"}      # 현지 시각 (KST / ET)
 BRIEF_WINDOW = {"KR": ("07:45", "08:40"), "US": ("08:15", "09:10")}
 
+# 정규장 종료. 시세 소스는 장중에도 "오늘" 봉을 주는데 그건 진행 중인 값이지
+# 종가가 아니다. 이 시각이 지나야 그날 봉을 확정으로 취급한다 (util/dates.py
+# `session_closed`, collect/prices.py `drop_unclosed`).
+#
+# GLOBAL(FX·원자재·코인)은 사실상 24시간 돌아서 "마감"이 없다. 그래도 기준이
+# 하나는 있어야 하므로 US 종료에 맞춘다 — CL=F·GC=F·DX-Y.NYB 가 전부 미국
+# 상장 선물/지수라 결제 스케줄이 거기에 붙어 있다. 그 결과 비트코인은 늘
+# "직전 마감" 값이 되는데, 카드마다 기준이 다른 것보다는 낫다.
+MARKET_CLOSE = {"KR": "15:30", "US": "16:00", "GLOBAL": "16:00"}
+CLOSE_TZ_MARKET = {"KR": "KR", "US": "US", "GLOBAL": "US"}
+
 # --------------------------------------------------------------------------
 # Universe
 #

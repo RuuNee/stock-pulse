@@ -15,6 +15,8 @@ export interface MacroIndex {
   name: string;
   market: Market | "GLOBAL";
   group: "index" | "fx" | "rate" | "commodity" | "crypto";
+  /** 이 값이 어느 날 마감인지 (YYYY-MM-DD). 장중 스냅샷을 싣지 않으므로 항상 마감일이다. */
+  date: string | null;
   value: number | null;
   change: number | null;
   changePct: number | null;

@@ -96,6 +96,12 @@ function IndexCard({ idx }: { idx: MacroIndex }) {
         <ChangeBadge pct={idx.changePct} size="sm" />
         <Sparkline data={idx.spark} width={52} height={20} />
       </div>
+      {/* 어느 날 마감인지 안 적으면 "장중인데 왜 안 움직여" 가 곧바로 "고장났나" 로 읽힌다. */}
+      {idx.date && (
+        <div className="text-[10px] mt-1 tabular-nums" style={{ color: "var(--muted)" }}>
+          {idx.date.slice(5).replace("-", ".")} 마감
+        </div>
+      )}
     </div>
   );
 }

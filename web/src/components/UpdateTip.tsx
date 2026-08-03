@@ -7,13 +7,23 @@ import { useState } from "react";
 //   brief      .github/workflows/brief-*.yml     개장 전 발송 창 (pipeline/config.py)
 // 뉴스와 지수는 같은 잡(pulse)이라 한 줄로 묶었다.
 const ROWS: Array<[string, string]> = [
-  ["뉴스 · 지수 · 환율 · 유가", "2시간마다 (주말 포함)"],
+  ["뉴스", "2시간마다 (주말 포함)"],
+  ["지수 · 환율 · 유가", "2시간마다 확인, 값은 직전 마감가"],
   ["종목 가격 · 차트", "평일 하루 2번, 각 장 마감 직후"],
   ["장전 브리핑", "거래일 하루 1번, 개장 20~75분 전"],
 ];
 
-/** 탭/호버하면 갱신 주기를 펼쳐 보여 주는 작은 힌트. `Term` 과 같은 관용구를 쓴다. */
-export default function UpdateTip({ label = "🕒 갱신 주기", up }: { label?: string; up?: boolean }) {
+/** 탭/호버하면 갱신 주기를 펼쳐 보여 주는 작은 힌트. `Term` 과 같은 관용구를 쓴다.
+ *
+ *  `align` 은 트리거 기준 어느 쪽으로 펼칠지다. 좁은 화면에서 실제로 잘리기
+ *  때문에 호출부가 골라야 한다 — 폭 288px 짜리를 왼쪽 끝 트리거 기준으로
+ *  가운데 정렬하면 화면 밖으로 86px 삐져나간다(390px 뷰포트 실측).
+ */
+export default function UpdateTip({
+  label = "🕒 갱신 주기",
+  up,
+  align = "center",
+}: { label?: string; up?: boolean; align?: "center" | "left" }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -33,10 +43,13 @@ export default function UpdateTip({ label = "🕒 갱신 주기", up }: { label?
       </span>
       {open && (
         <span
-          // 트리거 기준 가운데 정렬 — 홈 하단(가운데)과 종목 페이지(왼쪽) 양쪽에서 안 잘린다.
-          className={`absolute z-30 left-1/2 -translate-x-1/2 w-72 max-w-[85vw] p-3 rounded-xl text-sm shadow-lg block text-left ${
-            up ? "bottom-full mb-1" : "top-full mt-1"
-          }`}
+          // center: 트리거가 화면 가운데에 있을 때(홈 하단 문단).
+          // left  : 트리거가 왼쪽 끝에 붙어 있을 때(종목 페이지). 가운데 정렬하면
+          //         팝업 절반이 화면 왼쪽 밖으로 나간다.
+          // 폭은 화면에서 좌우 여백 2rem 을 뺀 값을 넘지 않게 묶는다.
+          className={`absolute z-30 w-72 max-w-[calc(100vw-2rem)] p-3 rounded-xl text-sm shadow-lg block text-left ${
+            align === "left" ? "left-0" : "left-1/2 -translate-x-1/2"
+          } ${up ? "bottom-full mb-1" : "top-full mt-1"}`}
           style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -53,7 +66,8 @@ export default function UpdateTip({ label = "🕒 갱신 주기", up }: { label?
             ))}
           </span>
           <span className="block mt-2 pt-2 text-xs" style={{ color: "var(--muted)", borderTop: "1px solid var(--border)" }}>
-            차트는 하루에 봉 하나가 그려지는 <b>일봉</b>이에요. 장중 실시간 시세는 제공하지 않습니다.
+            차트는 하루에 봉 하나가 그려지는 <b>일봉</b>이에요. 장중 실시간 시세는 제공하지 않습니다 —
+            지수도 <b>직전 마감가</b>라 장이 열려 있어도 숫자가 움직이지 않습니다.
           </span>
         </span>
       )}

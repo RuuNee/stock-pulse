@@ -6,9 +6,9 @@ Only presentation converts to KST/ET.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
-from ..config import ET, KST
+from ..config import CLOSE_TZ_MARKET, ET, KST, MARKET_CLOSE
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
 
@@ -95,6 +95,25 @@ def is_trading_day(market: str, d: date) -> bool:
     if holidays is None:
         return True   # 표가 없는 해 — 주말만 거른다. doctor 가 이 상태를 경고한다.
     return d.isoformat() not in holidays
+
+
+def session_closed(market: str, day: date, now: datetime | None = None) -> bool:
+    """`day` 세션이 그 시장 현지 시각 기준으로 이미 끝났는가.
+
+    시세 소스는 장중에도 "오늘" 봉을 준다 — 값이 계속 움직이는 진행 중인 봉이다.
+    그걸 종가로 실으면 화면이 "마감 기준"이라고 말하면서 실제로는 2시간마다
+    달라지는 스냅샷을 보여주게 된다(2026-08-03 실제 신고). 이 함수가 그 경계다.
+
+    미래 날짜는 당연히 안 끝났고, 지난 날짜는 시각과 무관하게 끝난 것으로 본다.
+    """
+    tz_market = CLOSE_TZ_MARKET.get(market, "US")
+    local = now or (now_kst() if tz_market == "KR" else now_et())
+    if day < local.date():
+        return True
+    if day > local.date():
+        return False
+    hh, mm = MARKET_CLOSE.get(market, MARKET_CLOSE["US"]).split(":")
+    return local.time() >= time(int(hh), int(mm))
 
 
 def holiday_coverage_gap(market: str, through: date | None = None) -> list[int]:
