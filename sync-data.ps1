@@ -9,7 +9,11 @@
 #   Actions 봇이 하루 12번쯤 같은 파일을 다시 만들어 올리므로, 로컬 산출물은
 #   버리고 origin 것을 받는 게 기본이다. 로컬 것을 올려야 할 때만 push 모드.
 
-param([ValidateSet('', 'reset', 'push')][string]$Mode = '')
+param(
+    [ValidateSet('', 'reset', 'push')][string]$Mode = '',
+    # 예약 작업용 무인 모드. 창도 키 입력도 없이 `.sync-data.log` 에만 남긴다.
+    [switch]$Quiet
+)
 
 try {
     chcp 65001 > $null
@@ -21,8 +25,17 @@ Set-Location $root
 
 if ($Mode -eq '') { $Mode = 'reset' }
 
+$LogFile = Join-Path $root '.sync-data.log'
+$LogKeepLines = 500   # 자동 실행이면 매일 쌓인다. 로그도 무한히 늘면 안 된다.
+
 function Wait-AndExit {
     param([int]$Code)
+    if ($Quiet) {
+        # 예약 작업에는 키를 누를 사람이 없다. 여기서 입력을 기다리면 작업이
+        # 끝나지 않은 채로 남아 다음 실행까지 막는다.
+        Trim-Log
+        exit $Code
+    }
     Write-Host ''
     Write-Host '아무 키나 누르면 이 창이 닫힙니다.' -ForegroundColor DarkGray
     try {
@@ -31,6 +44,15 @@ function Wait-AndExit {
         [void](Read-Host)
     }
     exit $Code
+}
+
+function Trim-Log {
+    if (-not (Test-Path $LogFile)) { return }
+    $lines = @(Get-Content $LogFile -ErrorAction SilentlyContinue)
+    if ($lines.Count -gt $LogKeepLines) {
+        Set-Content -Path $LogFile -Encoding utf8 `
+                    -Value ($lines | Select-Object -Last $LogKeepLines)
+    }
 }
 
 # 이름이 `Git` 이면 안 된다 — PowerShell 의 명령 해석 순서는 별칭>함수>cmdlet>
@@ -43,12 +65,24 @@ function Invoke-Git {
     return [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join "`n") }
 }
 
-function Show { param([string]$Text, [string]$Color = 'Gray'); Write-Host $Text -ForegroundColor $Color }
+function Show {
+    param([string]$Text, [string]$Color = 'Gray')
+    if ($Quiet) {
+        Add-Content -Path $LogFile -Encoding utf8 `
+                    -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Text)
+    } else {
+        Write-Host $Text -ForegroundColor $Color
+    }
+}
 
-Write-Host '=========================================='
-Write-Host '  Stock Pulse - 데이터 동기화'
-Write-Host '=========================================='
-Write-Host ''
+if ($Quiet) {
+    Show "───── 예약 실행 ($Mode) ─────"
+} else {
+    Write-Host '=========================================='
+    Write-Host '  Stock Pulse - 데이터 동기화'
+    Write-Host '=========================================='
+    Write-Host ''
+}
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Show '[X] git 을 찾을 수 없습니다.' Red
@@ -171,7 +205,7 @@ $size = (Get-ChildItem .git -Recurse -Force -ErrorAction SilentlyContinue |
          Measure-Object -Property Length -Sum).Sum
 Show ("      .git 크기: {0:N0} MB" -f ($size / 1MB)) DarkGray
 
-Write-Host ''
+if (-not $Quiet) { Write-Host '' }
 $left = @((Invoke-Git status --porcelain).Text -split "`n" | Where-Object { $_ -ne '' })
 if ($left.Count -eq 0) {
     Show '완료 - 작업 트리가 깨끗합니다.' Green
