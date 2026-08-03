@@ -12,18 +12,16 @@ const GROUP_ORDER = ["추세", "모멘텀", "변동성", "수급", "가격대"];
  *
  *  종합 점수 하나만 크게 보여주면 근거 없는 점괘가 된다. 그래서 ①행동 문구
  *  ②그 문구를 만든 지표 목록 ③각 지표의 교과서적 해석을 한 카드 안에 같이 둔다.
- *  초보 모드에서는 방향이 잡힌 지표만 추려 보여주고, 고급 모드에서 11가지 전부.
+ *  11가지 지표를 항상 전부 편다 — 접어 두면 "왜 이 판정인지"를 못 따라간다.
  */
 export default function AnalysisCard({ a, currency }: { a: TickerAnalysis; currency: string }) {
   const s = useSettings();
-  const [openAll, setOpenAll] = useState(false);
   // 행동 문구와 종합 점수는 서로 다른 것을 말하므로 색도 따로 잡는다.
   const color = verdictColor(ACTION_TONE[a.action] ?? "neutral", s);
   const scoreTone = toneOf(a.signal);
   const scoreColor = verdictColor(scoreTone, s);
 
-  const meaningful = a.signals.filter((x) => x.verdict !== "neutral");
-  const shown = s.beginner && !openAll ? meaningful.slice(0, 4) : a.signals;
+  const shown = a.signals;
 
   return (
     <section className="card p-4 flex flex-col gap-3.5">
@@ -83,15 +81,6 @@ export default function AnalysisCard({ a, currency }: { a: TickerAnalysis; curre
           <span className="text-xs" style={{ color: "var(--muted)" }}>
             강세 {a.counts.bullish} · 중립 {a.counts.neutral} · 약세 {a.counts.bearish}
           </span>
-          {s.beginner && meaningful.length > 4 && (
-            <button
-              className="ml-auto text-xs"
-              style={{ color: "var(--accent)" }}
-              onClick={() => setOpenAll((v) => !v)}
-            >
-              {openAll ? "간단히 보기" : `전체 ${a.signals.length}개 보기`}
-            </button>
-          )}
         </div>
         <div className="flex flex-col gap-1.5">
           {sortByGroup(shown).map((sig) => (

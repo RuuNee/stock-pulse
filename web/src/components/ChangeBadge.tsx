@@ -1,15 +1,13 @@
 import { useSettings } from "../lib/settings";
-import { fmtPct, moveLabel } from "../lib/format";
+import { fmtPct } from "../lib/format";
 
 // Color + arrow (never color alone — 색맹 대비, UIUX §4).
 export default function ChangeBadge({
   pct,
   size = "md",
-  showLabel = false,
 }: {
   pct: number | null | undefined;
   size?: "sm" | "md" | "lg";
-  showLabel?: boolean;
 }) {
   const s = useSettings();
   const color = s.colorFor(pct);
@@ -20,11 +18,6 @@ export default function ChangeBadge({
       <span className={cls}>
         {arrow} {fmtPct(pct ?? null)}
       </span>
-      {showLabel && s.beginner && pct != null && (
-        <span className="text-xs" style={{ color: "var(--muted)" }}>
-          {moveLabel(pct)}
-        </span>
-      )}
     </span>
   );
 }

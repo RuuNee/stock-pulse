@@ -32,17 +32,6 @@ export function fmtVolume(value: number): string {
   return value.toLocaleString("ko-KR") + "주";
 }
 
-// Plain-language magnitude label for a move (beginner mode).
-export function moveLabel(pct: number | null): string {
-  if (pct == null) return "";
-  const a = Math.abs(pct);
-  const dir = pct >= 0 ? "올랐어요" : "내렸어요";
-  if (a >= 8) return `많이 ${dir}`;
-  if (a >= 3) return `꽤 ${dir}`;
-  if (a >= 1) return `조금 ${dir}`;
-  return `거의 그대로예요`;
-}
-
 export function volLabel(ratio: number | null): string {
   if (ratio == null) return "";
   return `평소의 ${ratio.toFixed(1)}배`;

@@ -119,9 +119,6 @@ function Toggles({ compact }: { compact?: boolean }) {
   const style = { borderColor: "var(--border)", background: "var(--surface-2)", color: "var(--text)" };
   return (
     <>
-      <button className={btn} style={s.beginner ? { ...style, borderColor: "var(--accent)", color: "var(--accent)" } : style} onClick={s.toggleBeginner}>
-        {s.beginner ? "🟢 초보모드" : "초보모드 끔"}
-      </button>
       {!compact && (
         <button className={btn} style={style} onClick={s.toggleColorMode}>
           {s.colorMode === "kr" ? "🔴 상승 / 🔵 하락" : "🟢 상승 / 🔴 하락"}

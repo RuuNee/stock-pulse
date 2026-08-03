@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import { useParams, Navigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
-import { useSettings } from "../lib/settings";
 import TickerChart, { type Overlays } from "../components/TickerChart";
 import ChangeBadge from "../components/ChangeBadge";
 import NewsCard from "../components/NewsCard";
@@ -21,8 +20,8 @@ const RANGES: { label: string; days: number }[] = [
   { label: "2년", days: 500 },
 ];
 
-// 차트 위에 켤 수 있는 것들. 기본값은 초보자가 처음 열었을 때의 화면 —
-// 뉴스 마커와 지지·저항선만 켜 두고, 선이 많아지는 지표는 직접 켜게 한다.
+// 차트 위에 켤 수 있는 것들. 처음 열었을 때는 뉴스 마커와 지지·저항선만 켜 둔다 —
+// 선이 많아지는 지표까지 기본으로 켜면 첫 화면이 읽히지 않는다.
 const OVERLAY_CHIPS: { key: keyof Overlays; label: string; hint: string }[] = [
   { key: "markers", label: "📍 뉴스 마커", hint: "급등락일에 마커를 찍습니다" },
   { key: "ma", label: "이동평균", hint: "5·20·60·120일 평균선" },
@@ -44,7 +43,6 @@ export default function Ticker() {
   if ((m !== "KR" && m !== "US") || !code) return <Navigate to="/" replace />;
 
   const { data, loading, error } = useAsync(() => api.ticker(m, code), [m, code]);
-  const s = useSettings();
   const [range, setRange] = useState(132);
   const [overlays, setOverlays] = useState<Overlays>({
     markers: true, ma: false, bb: false, macd: false, rsi: false, levels: true,
@@ -77,7 +75,7 @@ export default function Ticker() {
           </div>
           <div className="mt-1.5 flex items-baseline gap-3">
             <span className="text-2xl font-bold tabular-nums">{fmtPrice(q.close, d.currency)}</span>
-            <ChangeBadge pct={q.changePct} size="lg" showLabel />
+            <ChangeBadge pct={q.changePct} size="lg" />
           </div>
           <div className="text-xs mt-1" style={{ color: "var(--muted)" }}>
             <Term k="volume">거래량</Term> {fmtVolume(q.volume)} ({volLabel(q.volumeVsAvg20)})
@@ -160,7 +158,7 @@ export default function Ticker() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {(s.beginner ? d.events.filter((e) => e.severity >= 2 || e.news.length > 0) : d.events).map((e) => (
+            {d.events.map((e) => (
               <EventCard
                 key={e.id}
                 e={e}

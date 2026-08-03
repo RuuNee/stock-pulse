@@ -7,7 +7,6 @@ import {
   createSeriesMarkers,
   LineStyle,
   type IChartApi,
-  type ISeriesApi,
   type SeriesMarker,
   type Time,
   type UTCTimestamp,
@@ -60,10 +59,7 @@ function toTime(dateStr: string): UTCTimestamp {
   return (Date.parse(dateStr + "T00:00:00Z") / 1000) as UTCTimestamp;
 }
 
-/** 초보 모드는 20일선 하나만. 색은 고급 모드와 **같은 보라**를 쓴다 — 예전에는
- *  초보 모드만 주황으로 그려서, 도움말의 "보라 20일선"과 화면이 어긋났다. */
-const maKeys = (beginner: boolean) =>
-  (beginner ? ["ma20"] : ["ma5", "ma20", "ma60", "ma120"]) as (keyof typeof INDICATOR)[];
+const MA_KEYS = ["ma5", "ma20", "ma60", "ma120"] as (keyof typeof INDICATOR)[];
 
 export default function TickerChart({ detail, range, overlays, onEventNews }: Props) {
   const holder = useRef<HTMLDivElement>(null);
@@ -72,7 +68,7 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
   const [sel, setSel] = useState<BarSel | null>(null);
 
   // Clear the detail panel whenever the chart is rebuilt (range/mode change).
-  useEffect(() => setSel(null), [detail.code, range, s.beginner]);
+  useEffect(() => setSel(null), [detail.code, range]);
 
   useEffect(() => {
     const el = holder.current;
@@ -131,36 +127,28 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
       })),
     );
 
-    // --- price: candles (advanced) or close line (beginner) ---
-    let priceSeries: ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
-    if (s.beginner) {
-      const line = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 2 });
-      line.setData(slice.map((r) => ({ time: toTime(r[0] as string), value: r[4] as number })));
-      priceSeries = line;
-    } else {
-      const candle = chart.addSeries(CandlestickSeries, {
-        upColor: upC,
-        downColor: downC,
-        borderUpColor: upC,
-        borderDownColor: downC,
-        wickUpColor: upC,
-        wickDownColor: downC,
-      });
-      candle.setData(
-        slice.map((r) => ({
-          time: toTime(r[0] as string),
-          open: r[1] as number,
-          high: r[2] as number,
-          low: r[3] as number,
-          close: r[4] as number,
-        })),
-      );
-      priceSeries = candle;
-    }
+    // --- price: candles ---
+    const priceSeries = chart.addSeries(CandlestickSeries, {
+      upColor: upC,
+      downColor: downC,
+      borderUpColor: upC,
+      borderDownColor: downC,
+      wickUpColor: upC,
+      wickDownColor: downC,
+    });
+    priceSeries.setData(
+      slice.map((r) => ({
+        time: toTime(r[0] as string),
+        open: r[1] as number,
+        high: r[2] as number,
+        low: r[3] as number,
+        close: r[4] as number,
+      })),
+    );
 
     // --- moving averages ---
     if (overlays.ma) {
-      for (const key of maKeys(s.beginner)) {
+      for (const key of MA_KEYS) {
         if (!ind[key]) continue;
         const maLine = chart.addSeries(LineSeries, {
           color: INDICATOR[key].color,
@@ -265,11 +253,7 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
     // --- event markers (visual hint only; click detail handled below) ---
     if (overlays.markers) {
       const firstDate = slice[0]?.[0] as string | undefined;
-      const events = detail.events.filter(
-        (e) =>
-          (!firstDate || e.date >= firstDate) &&
-          (!s.beginner || e.severity >= 2 || e.news.length > 0),
-      );
+      const events = detail.events.filter((e) => !firstDate || e.date >= firstDate);
       // Shape-only markers (no text): text labels overlap when events are
       // dense and — because lightweight-charts hides colliding labels — make
       // markers vanish when zoomed in. Meaning comes from the legend below and
@@ -325,7 +309,7 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    detail.code, range, s.beginner, s.theme, s.colorMode,
+    detail.code, range, s.theme, s.colorMode,
     overlays.markers, overlays.ma, overlays.bb, overlays.macd, overlays.rsi, overlays.levels,
   ]);
 
@@ -334,7 +318,7 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
   const extra = (overlays.macd ? MACD_PANE_PX : 0) + (overlays.rsi ? RSI_PANE_PX : 0);
 
   const priceLegend: IndicatorStyle[] = [
-    ...(overlays.ma ? maKeys(s.beginner).map((k) => INDICATOR[k]) : []),
+    ...(overlays.ma ? MA_KEYS.map((k) => INDICATOR[k]) : []),
     ...(overlays.bb ? [INDICATOR.bb] : []),
   ];
 

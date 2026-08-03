@@ -1,4 +1,4 @@
-// Global UI preferences: beginner mode, color convention, theme.
+// Global UI preferences: color convention, theme.
 // Persisted to localStorage; consumed via useSettings().
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -7,10 +7,8 @@ type Theme = "light" | "dark";
 type ColorMode = "kr" | "us"; // kr: 상승=빨강, us: 상승=초록
 
 interface Settings {
-  beginner: boolean;
   theme: Theme;
   colorMode: ColorMode;
-  toggleBeginner: () => void;
   toggleTheme: () => void;
   toggleColorMode: () => void;
   // resolve up/down to a semantic class suffix
@@ -31,11 +29,11 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [beginner, setBeginner] = useState(() => load("sp:beginner", true));
   const [theme, setTheme] = useState<Theme>(() => load("sp:theme", "dark"));
   const [colorMode, setColorMode] = useState<ColorMode>(() => load("sp:color", "kr"));
 
-  useEffect(() => localStorage.setItem("sp:beginner", JSON.stringify(beginner)), [beginner]);
+  // 초보 모드를 걷어냈다. 쓰던 사람 브라우저에는 `sp:beginner` 가 남아 있는데,
+  // 읽는 곳이 없으니 무해하다. 지우는 코드를 넣으면 그 코드가 영원히 남는다.
   useEffect(() => localStorage.setItem("sp:theme", JSON.stringify(theme)), [theme]);
   useEffect(() => localStorage.setItem("sp:color", JSON.stringify(colorMode)), [colorMode]);
   useEffect(() => {
@@ -46,17 +44,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const up = colorMode === "kr" ? "var(--up)" : "var(--us-up)";
     const down = colorMode === "kr" ? "var(--down)" : "var(--us-down)";
     return {
-      beginner,
       theme,
       colorMode,
-      toggleBeginner: () => setBeginner((b) => !b),
       toggleTheme: () => setTheme((t) => (t === "dark" ? "light" : "dark")),
       toggleColorMode: () => setColorMode((c) => (c === "kr" ? "us" : "kr")),
       upColor: up,
       downColor: down,
       colorFor: (pct) => (pct == null ? "var(--muted)" : pct >= 0 ? up : down),
     };
-  }, [beginner, theme, colorMode]);
+  }, [theme, colorMode]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
