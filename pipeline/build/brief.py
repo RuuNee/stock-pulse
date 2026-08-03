@@ -9,13 +9,17 @@ rule-composed otherwise.
 from __future__ import annotations
 
 from ..analyze import llm
-from ..config import SITE_URL
+from ..analyze.technical import DISCLAIMER as _TA_DISCLAIMER
+from ..config import SITE_URL, TA_BRIEF_PICKS
 from ..util import io
 from ..util import text as T
 from ..util.dates import iso, next_session_date, now_utc
 from ..config import DATA_DIR
 
 _DISCLAIMER = "본 브리핑은 공개된 뉴스를 정리한 정보이며 투자 권유가 아닙니다."
+
+_BULLISH = ("strongBuy", "buy")
+_BEARISH = ("strongSell", "sell")
 
 
 def build_brief(market: str, site: dict) -> dict:
@@ -27,8 +31,9 @@ def build_brief(market: str, site: dict) -> dict:
     mood = overview["marketMood"].get(market, {})
     snapshot = _snapshot(market, overview["indices"])
     top_news = [_top_news(n) for n in news[:6]]
+    chart_signals = _chart_signals(market, site["tickers"])
     watchlist = _watchlist(market, overview["movers"], site["tickers"], site)
-    headline, three = _summary(market, snapshot, top_news, mood)
+    headline, three = _summary(market, snapshot, top_news, mood, chart_signals)
 
     return {
         "market": market,
@@ -39,6 +44,7 @@ def build_brief(market: str, site: dict) -> dict:
         "mood": {k: mood.get(k) for k in ("score", "label", "color")},
         "marketSnapshot": snapshot,
         "topNews": top_news,
+        "chartSignals": chart_signals,
         "watchlistMoves": watchlist,
         "calendar": [],  # reserved; economic-calendar source is a future spec
         "disclaimer": _DISCLAIMER,
@@ -101,14 +107,64 @@ def _why(n: dict) -> str:
     return "오늘 시장 심리에 영향을 줄 수 있는 소식입니다."
 
 
+def _chart_signals(market: str, tickers: list[dict]) -> dict:
+    """차트 분석 결과를 시장 단위로 모은다 (schema §6).
+
+    종목 파일을 다시 열지 않는다 — `tickers/index.json` 항목에 이미 압축본이
+    실려 있어서, 브리핑 전용 재계산이 필요 없다.
+    """
+    rows = [t for t in tickers
+            if t.get("market") == market and isinstance(t.get("analysis"), dict)]
+    if not rows:
+        return {"asOf": None, "counts": {"bullish": 0, "neutral": 0, "bearish": 0},
+                "bullish": [], "bearish": [], "note": _TA_DISCLAIMER}
+
+    def bucket(t: dict) -> str:
+        sig = t["analysis"].get("signal")
+        return "bullish" if sig in _BULLISH else "bearish" if sig in _BEARISH else "neutral"
+
+    counts = {"bullish": 0, "neutral": 0, "bearish": 0}
+    for t in rows:
+        counts[bucket(t)] += 1
+
+    ups = sorted((t for t in rows if bucket(t) == "bullish"),
+                 key=lambda t: t["analysis"]["score"], reverse=True)
+    downs = sorted((t for t in rows if bucket(t) == "bearish"),
+                   key=lambda t: t["analysis"]["score"])
+    dates = [t["analysis"].get("date") for t in rows if t["analysis"].get("date")]
+
+    return {
+        "asOf": max(dates) if dates else None,
+        "counts": counts,
+        "bullish": [_signal_ref(t) for t in ups[:TA_BRIEF_PICKS]],
+        "bearish": [_signal_ref(t) for t in downs[:TA_BRIEF_PICKS]],
+        "note": _TA_DISCLAIMER,
+    }
+
+
+def _signal_ref(t: dict) -> dict:
+    a = t["analysis"]
+    return {
+        "code": t["code"], "name": t["name"], "market": t["market"],
+        "changePct": t.get("changePct"),
+        "score": a["score"], "signal": a["signal"], "label": a["label"],
+        "action": a["action"], "actionEmoji": a["actionEmoji"],
+        "actionLabel": a["actionLabel"], "headline": a["headline"],
+    }
+
+
 def _watchlist(market, movers, tickers, site) -> list[dict]:
     picks = (movers.get(market, {}).get("up", [])[:3]
              + movers.get(market, {}).get("down", [])[:2])
+    by_code = {t["code"]: t for t in tickers if t.get("market") == market}
     out = []
     for m in picks:
         note = _latest_event_note(m["code"], m["market"])
+        analysis = (by_code.get(m["code"]) or {}).get("analysis")
         out.append({"code": m["code"], "name": m["name"],
-                    "changePct": m["changePct"], "note": note})
+                    "changePct": m["changePct"], "note": note,
+                    "signal": (analysis or {}).get("actionLabel"),
+                    "signalEmoji": (analysis or {}).get("actionEmoji")})
     return out
 
 
@@ -119,18 +175,35 @@ def _latest_event_note(code: str, market: str) -> str | None:
     return data["events"][0].get("headline")
 
 
-def _summary(market, snapshot, top_news, mood):
+def _summary(market, snapshot, top_news, mood, chart_signals=None):
     label = "국장" if market == "KR" else "미장"
     snap = "\n".join(f"- {s['name']}: {s['value']} ({s['changePct']:+.2f}%)"
                      for s in snapshot if s.get("changePct") is not None)
     heads = "\n".join(f"- {n['title']}" for n in top_news[:6])
-    result = llm.brief_summary(label, snap, heads, mood.get("label", "중립"))
+    result = llm.brief_summary(label, snap, heads, mood.get("label", "중립"),
+                               _tech_line(chart_signals))
     if result:
         return result
-    return _rule_summary(label, snapshot, top_news, mood)
+    return _rule_summary(label, snapshot, top_news, mood, chart_signals)
 
 
-def _rule_summary(label, snapshot, top_news, mood):
+def _tech_line(chart_signals) -> str:
+    """차트 분석 요약 한 줄. LLM 프롬프트와 규칙 요약이 같은 문장을 쓴다."""
+    if not chart_signals or not chart_signals.get("counts"):
+        return ""
+    c = chart_signals["counts"]
+    total = c["bullish"] + c["neutral"] + c["bearish"]
+    if not total:
+        return ""
+    line = (f"차트 지표 기준으로 추적 종목 {total}개 중 매수 우위 {c['bullish']}개, "
+            f"매도 우위 {c['bearish']}개입니다.")
+    lead = chart_signals.get("bullish") or []
+    if lead:
+        line += f" 가장 강한 신호는 {lead[0]['name']}({lead[0]['actionLabel']})입니다."
+    return line
+
+
+def _rule_summary(label, snapshot, top_news, mood, chart_signals=None):
     headline = f"{label} 개장 전 점검 · 시장 분위기 {mood.get('label', '중립')}"
     lines = []
     us = next((s for s in snapshot if s["name"] in ("S&P 500", "나스닥")), None)
@@ -142,6 +215,9 @@ def _rule_summary(label, snapshot, top_news, mood):
         lines.append(f"원달러 환율은 {fx['value']:,.0f}원 수준입니다.")
     if top_news:
         lines.append(f"오늘 주목할 뉴스: {T.truncate(top_news[0]['title'], 40)}.")
+    tech = _tech_line(chart_signals)
+    if tech:
+        lines.append(tech)
     while len(lines) < 3:
         lines.append("특별한 대형 이슈 없이 무난하게 출발할 것으로 보입니다.")
     return headline, lines[:3]

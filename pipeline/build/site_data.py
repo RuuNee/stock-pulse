@@ -13,7 +13,7 @@ from ..collect import macro as macro_mod
 from ..collect import news as news_mod
 from ..collect import prices, universe
 from ..analyze import events as events_mod
-from ..analyze import indicators, link, llm, mood, score, summarize
+from ..analyze import indicators, link, llm, mood, score, summarize, technical
 from ..config import (
     DATA_DIR,
     EVENT_BACKFILL_MAX_AGE_DAYS,
@@ -291,6 +291,8 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
             "rows": prices.to_rows(df),
         },
         "indicators": indicators.compute(df),
+        # 차트 분석은 순수 계산이라 LLM 예산도 네트워크도 쓰지 않는다.
+        "analysis": technical.analyze(df),
         "events": events,
         "recentNews": [_news_brief(n) for n in combined[:RECENT_NEWS_PER_TICKER]],
         "_spark": prices.spark(df, 30),
@@ -355,6 +357,8 @@ def _index_entry(detail: dict) -> dict:
         "spark": detail["_spark"],
         "eventCount": len(detail["events"]),
         "latestEvent": latest_event,
+        # 목록·브리핑이 종목 파일을 열지 않고도 신호를 보여줄 수 있게 압축본을 싣는다.
+        "analysis": technical.brief_entry(detail),
         "date": q.get("date"),
     }
 

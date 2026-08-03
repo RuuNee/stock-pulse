@@ -372,6 +372,29 @@ EVENT_MAX_PER_TICKER = 40  # keep the most recent N (bounds UI + file size)
 
 EVENT_SEVERITY_BANDS = [(6.0, 1), (9.0, 2), (13.0, 3)]  # (|pct| >= x, severity)
 
+# --------------------------------------------------------------------------
+# 차트 분석 (analyze/technical.py)
+#
+# 값은 전부 교과서에서 관습적으로 쓰는 기본값이다 (RSI 70/30, 골든크로스
+# 20×60일선 등). 임의로 최적화하지 않았다 — 과거 데이터에 맞춘 값은 앞으로도
+# 맞으리라는 보장이 없고, 초보 사용자가 다른 앱에서 본 숫자와 어긋나면
+# 설명하기만 어려워진다.
+# --------------------------------------------------------------------------
+TA_MIN_BARS = 80            # 이보다 짧으면 분석을 만들지 않는다 (60일선이 안 나온다)
+TA_CROSS_LOOKBACK = 10      # 골든/데드크로스를 "최근"으로 볼 거래일 수
+TA_BREAKOUT_LOOKBACK = 60   # 신고가·신저가 판정 구간
+TA_PULLBACK_BAND = 3.0      # 20일선 ±% 안이면 눌림목(추가매수) 구간으로 본다
+TA_RSI_OVERBOUGHT = 70.0
+TA_RSI_OVERSOLD = 30.0
+TA_VOLUME_SURGE = 1.5       # 20일 평균 대비 거래량 배수
+TA_LEVEL_NEAR_PCT = 2.0     # 지지·저항선 근접 판정 (%)
+TA_LEVEL_RECENT_BARS = 20   # 스윙 피벗과 함께 후보로 넣는 "최근 고·저" 구간
+
+# 종합 점수(-100~+100) → 신호 라벨. 위에서부터 처음 걸리는 구간을 쓴다.
+TA_SIGNAL_BANDS = ((45, "strongBuy"), (15, "buy"), (-15, "neutral"), (-45, "sell"))
+
+TA_BRIEF_PICKS = 4          # 브리핑에 싣는 강세/약세 종목 수 (각각)
+
 NEWS_KEEP_DAYS = 3         # how much of the general feed to publish
 NEWS_MAX_ITEMS = 400
 TICKER_NEWS_DAYS = 400     # per-ticker news retained for event matching

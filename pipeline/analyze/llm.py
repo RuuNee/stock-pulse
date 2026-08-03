@@ -196,16 +196,19 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
 # --------------------------------------------------------------------------
 # Brief 3-line summary
 # --------------------------------------------------------------------------
-def brief_summary(label: str, snapshot_text: str, headlines: str, mood: str) -> tuple[str, list[str]] | None:
+def brief_summary(label: str, snapshot_text: str, headlines: str, mood: str,
+                  technical_text: str = "") -> tuple[str, list[str]] | None:
     if not available():
         return None
+    tech = f"차트 분석 요약:\n{technical_text}\n\n" if technical_text else ""
     prompt = (
         "당신은 주식 초보자를 위한 한국어 시장 브리핑 작성자입니다. 사실만 전달하고 "
         "투자 권유는 하지 않습니다.\n\n"
         f"{label} 개장 전 브리핑. 시장 분위기: {mood}.\n"
-        f"간밤/전일 지표:\n{snapshot_text}\n\n오늘 주요 뉴스:\n{headlines}\n\n"
+        f"간밤/전일 지표:\n{snapshot_text}\n\n{tech}오늘 주요 뉴스:\n{headlines}\n\n"
         "초보 투자자가 오늘 시장을 이해하도록 headline 1개와 3줄 요약을 만드세요. "
-        "각 줄 한 문장, 존댓말, 쉬운 말.\n"
+        "각 줄 한 문장, 존댓말, 쉬운 말. 차트 분석 요약이 주어졌다면 한 줄은 그 내용을 "
+        "'차트 지표 기준'이라고 밝히며 쓰되, 매수·매도를 권하는 문장으로 바꾸지 마세요.\n"
         'JSON으로만: {"headline": "한 문장", "threeLines": ["...", "...", "..."]}'
     )
     data = _post(prompt)

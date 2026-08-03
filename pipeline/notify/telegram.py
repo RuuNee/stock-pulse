@@ -75,13 +75,35 @@ def render(brief: dict) -> str:
             if meta:
                 L.append(f"   🏷 {meta}")
 
+    chart = brief.get("chartSignals") or {}
+    counts = chart.get("counts") or {}
+    if counts.get("bullish") or counts.get("bearish"):
+        L.append("\n━━━━━━━━━━━━━━")
+        L.append("<b>📊 차트 분석 신호</b>")
+        total = counts.get("bullish", 0) + counts.get("neutral", 0) + counts.get("bearish", 0)
+        L.append(f"추적 {total}종목 · 매수 우위 {counts.get('bullish', 0)} · "
+                 f"관망 {counts.get('neutral', 0)} · 매도 우위 {counts.get('bearish', 0)}")
+        for title, rows in (("강세", chart.get("bullish", [])),
+                            ("약세", chart.get("bearish", []))):
+            if not rows:
+                continue
+            L.append(f"\n<b>{title}</b>")
+            for r in rows:
+                L.append(f"{_e(r.get('actionEmoji', '·'))} {_e(r['name'])} "
+                         f"<b>{_e(r['actionLabel'])}</b> ({r['score']:+d}점)")
+                L.append(f"   {_e(r['headline'])}")
+        if chart.get("note"):
+            L.append(f"\n<i>{_e(chart['note'])}</i>")
+
     watch = brief.get("watchlistMoves", [])
     if watch:
         L.append("\n━━━━━━━━━━━━━━")
         L.append("<b>👀 관심 종목 움직임</b>")
         for w in watch:
             note = f"  {_e(w['note'])}" if w.get("note") else ""
-            L.append(f"{_e(w['name'])}  {_arrow(w.get('changePct'))}{note}")
+            sig = (f"  {_e(w.get('signalEmoji') or '·')} {_e(w['signal'])}"
+                   if w.get("signal") else "")
+            L.append(f"{_e(w['name'])}  {_arrow(w.get('changePct'))}{sig}{note}")
 
     if brief.get("siteUrl"):
         L.append(f"\n🔗 <a href=\"{_e(brief['siteUrl'])}\">자세히 보기</a>")

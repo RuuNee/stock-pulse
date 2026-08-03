@@ -1,28 +1,19 @@
-"""Technical indicators aligned 1:1 with the OHLCV rows the site receives."""
+"""Technical indicators aligned 1:1 with the OHLCV rows the site receives.
+
+계산 자체는 `technical.py` 에 있다 — 차트에 그릴 시계열과 신호 판정이 같은
+공식을 써야 "차트에 그려진 선"과 "분석 카드가 말하는 근거"가 어긋나지 않는다.
+이 모듈은 파이프라인이 부르던 이름을 유지하는 얇은 껍데기다.
+"""
 
 from __future__ import annotations
 
 import pandas as pd
 
+from .technical import rsi, series
+
 
 def compute(df: pd.DataFrame) -> dict[str, list[float | None]]:
-    close, volume = df["Close"], df["Volume"]
-    return {
-        "ma5": _series(close.rolling(5).mean()),
-        "ma20": _series(close.rolling(20).mean()),
-        "ma60": _series(close.rolling(60).mean()),
-        "rsi14": _series(rsi(close, 14), digits=1),
-        "volMa20": _series(volume.rolling(20).mean(), digits=0),
-    }
+    return series(df)
 
 
-def rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
-    rs = gain / loss.replace(0, pd.NA)
-    return (100 - 100 / (1 + rs)).fillna(50)
-
-
-def _series(s: pd.Series, digits: int = 2) -> list[float | None]:
-    return [None if pd.isna(v) else round(float(v), digits) for v in s]
+__all__ = ["compute", "rsi"]
