@@ -51,6 +51,14 @@ def test_no_removed_feed_left_in_docs():
      lambda: config.TRANSLATE_MAX_ITEMS),
     ("05-운영가이드.md", r"`GOOGLE_NEWS_DELAY_SEC` 상향 \(기본 ([\d.]+)초\)",
      lambda: config.GOOGLE_NEWS_DELAY_SEC),
+    # 차트 분석 임계값 — 도움말 화면이 "RSI 70 이상이면 과매수"처럼 숫자를 그대로
+    # 적어 두므로, 코드만 바꾸면 설명과 판정이 조용히 어긋난다.
+    ("10-전체기술스펙.md", r"\| `TA_BREAKOUT_LOOKBACK` \| (\d+) \|",
+     lambda: config.TA_BREAKOUT_LOOKBACK),
+    ("10-전체기술스펙.md", r"\| `TA_RSI_OVERBOUGHT` / `TA_RSI_OVERSOLD` \| ([\d.]+) / [\d.]+ \|",
+     lambda: config.TA_RSI_OVERBOUGHT),
+    ("10-전체기술스펙.md", r"\| `TA_PULLBACK_BAND` \| ([\d.]+) \|",
+     lambda: config.TA_PULLBACK_BAND),
 ])
 def test_documented_defaults_match_config(doc, pattern, value):
     found = re.search(pattern, (DOCS / doc).read_text(encoding="utf-8"))
