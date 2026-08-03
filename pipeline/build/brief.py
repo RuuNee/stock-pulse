@@ -8,9 +8,12 @@ rule-composed otherwise.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+from pathlib import Path
+
 from ..analyze import llm
 from ..analyze.technical import DISCLAIMER as _TA_DISCLAIMER
-from ..config import SITE_URL, TA_BRIEF_PICKS
+from ..config import BRIEF_KEEP_DAYS, SITE_URL, TA_BRIEF_PICKS
 from ..util import io
 from ..util import text as T
 from ..util.dates import iso, next_session_date, now_utc
@@ -56,6 +59,34 @@ def write_brief(brief: dict) -> None:
     market = brief["market"]
     io.write_json(DATA_DIR / "brief" / f"latest-{market}.json", brief)
     io.write_json(DATA_DIR / "brief" / f"{brief['date']}-{market}.json", brief, quiet=True)
+    prune_briefs(market)
+
+
+def prune_briefs(market: str, *, data_dir: Path | None = None,
+                 today: date | None = None) -> list[Path]:
+    """오래된 날짜별 브리핑 파일을 지운다. 지운 경로를 돌려준다.
+
+    파일 하나하나는 작지만 시장당 하루 1개씩 무한히 쌓인다. 화면은 이 파일을
+    읽지 않고(`latest-*.json` 만 읽는다) 게이트도 이번 세션 것만 본다.
+
+    기준일은 "오늘"이지 방금 쓴 브리핑의 날짜가 아니다. 브리핑 날짜는 *다음*
+    세션(=미래)이라, 그걸 기준으로 잡으면 보관 창이 하루씩 밀린다.
+    """
+    root = (data_dir or DATA_DIR) / "brief"
+    cutoff = (today or now_utc().date()) - timedelta(days=BRIEF_KEEP_DAYS)
+    removed = []
+    for path in sorted(root.glob(f"*-{market}.json")):
+        stamp = path.name[:-len(f"-{market}.json")]
+        try:
+            day = date.fromisoformat(stamp)
+        except ValueError:
+            continue  # latest-KR.json 처럼 날짜가 아닌 이름은 건드리지 않는다
+        if day < cutoff:
+            path.unlink()
+            removed.append(path)
+    if removed:
+        print(f"  브리핑 보관 정리: {len(removed)}개 삭제 (>{BRIEF_KEEP_DAYS}일)")
+    return removed
 
 
 # --------------------------------------------------------------------------

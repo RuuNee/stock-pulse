@@ -397,6 +397,17 @@ TA_BRIEF_PICKS = 4          # 브리핑에 싣는 강세/약세 종목 수 (각�
 
 NEWS_KEEP_DAYS = 3         # how much of the general feed to publish
 NEWS_MAX_ITEMS = 400
+
+# 날짜별 브리핑 파일(`data/brief/YYYY-MM-DD-KR.json`)을 며칠치 남길지.
+#
+# 이 파일들은 화면에 안 쓴다 — 사이트는 `latest-{market}.json` 만 읽는다.
+# 존재 이유는 게이트의 중복 발송 방지뿐이고, 게이트는 "이번 세션" 파일 하나만
+# 본다 (gate.decide). 그런데 시장당 하루 1개씩 영원히 쌓여서 1년이면 730개다.
+#
+# 30일은 게이트가 필요로 하는 것(당일)보다 한참 넉넉하다. 이 여유는 사람을
+# 위한 것이다 — "어제 브리핑 뭐 나갔지" 를 파일로 확인할 수 있어야 하고,
+# 발송 사고가 나도 며칠 지나서 들여다볼 수 있어야 한다.
+BRIEF_KEEP_DAYS = 30
 TICKER_NEWS_DAYS = 400     # per-ticker news retained for event matching
 RECENT_NEWS_PER_TICKER = 10
 

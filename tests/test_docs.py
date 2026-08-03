@@ -59,6 +59,14 @@ def test_no_removed_feed_left_in_docs():
      lambda: config.TA_RSI_OVERBOUGHT),
     ("10-전체기술스펙.md", r"\| `TA_PULLBACK_BAND` \| ([\d.]+) \|",
      lambda: config.TA_PULLBACK_BAND),
+    # 보관 기간은 운영자가 "언제까지 브리핑을 찾아볼 수 있나"를 판단하는 근거다.
+    # 세 곳(스펙 표 · 스펙 §9.4 본문 · 운영가이드 조정표)에 숫자가 적혀 있다.
+    ("10-전체기술스펙.md", r"\| `BRIEF_KEEP_DAYS` \| (\d+) \|",
+     lambda: config.BRIEF_KEEP_DAYS),
+    ("10-전체기술스펙.md", r"`BRIEF_KEEP_DAYS`\((\d+)일\)",
+     lambda: config.BRIEF_KEEP_DAYS),
+    ("05-운영가이드.md", r"`BRIEF_KEEP_DAYS` \(기본 (\d+)일\)",
+     lambda: config.BRIEF_KEEP_DAYS),
 ])
 def test_documented_defaults_match_config(doc, pattern, value):
     found = re.search(pattern, (DOCS / doc).read_text(encoding="utf-8"))
