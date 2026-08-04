@@ -1,11 +1,43 @@
 name: data-sync
 
-# Rebuild all site data after each market close and commit the JSON.
-# 07:30 UTC ≈ 16:30 KST (국장 마감 후), 21:30 UTC ≈ 06:30 KST (미장 마감 후).
+# 장 마감 후 종목·차트·이벤트를 다시 만들고 JSON 을 커밋한다.
+#
+# ── 왜 이렇게 생겼나 ────────────────────────────────────────────────
+# 예전에는 07:30Z / 21:30Z 두 번만 예약했다. GitHub 의 schedule 은 "이 시각
+# 이후 언젠가"라서 이 저장소 실측 지연이 6~202분인데, 대체 슬롯이 없으니
+# 그 지연이 그대로 화면 지연이 됐다.
+#
+#   2026-08-04: 국장 15:30 KST 마감 → 07:30Z 예약이 10:05Z(19:05 KST)에 시작.
+#   그 3시간 43분 동안 화면은 전날 종가를 보여줬다 (LS ELECTRIC 188,400 vs
+#   실제 마감 197,000). 사용자 신고로 확인된 실제 증상이다.
+#
+# ── 고친 방식 (brief-*.yml 과 같은 패턴) ────────────────────────────
+# 1) 마감 직후부터 45분 간격 슬롯을 시장별로 4개씩 깐다. 슬롯마다 지연이
+#    독립적이라 하나쯤은 일찍 깨어난다.
+# 2) 슬롯은 먼저 `sync-gate` 로 "이 시장 데이터가 마지막 마감 세션보다
+#    뒤처졌나"를 본다. 아니면 즉시 끝난다 — 표준 라이브러리만 쓰므로
+#    pip install 전에 판정되고, 건너뛰는 슬롯은 15초짜리다.
+# 3) **뒤처진 시장만** 다시 만든다. 예전에는 두 실행이 매번 양 시장을 다
+#    빌드해서 절반이 헛일이었다. 슬롯을 4배로 늘렸는데 하루 사용 분은 줄었다.
 on:
   schedule:
-    - cron: "30 7,21 * * 1-5"
+    # 국장 마감 15:30 KST = 06:30 UTC
+    - cron: "45 6 * * 1-5"
+    - cron: "30 7 * * 1-5"
+    - cron: "15 8 * * 1-5"
+    - cron: "0 9 * * 1-5"
+    # 미장 마감 16:00 ET = 20:00 UTC(서머타임) / 21:00 UTC(겨울)
+    - cron: "15 20 * * 1-5"
+    - cron: "0 21 * * 1-5"
+    - cron: "45 21 * * 1-5"
+    - cron: "30 22 * * 1-5"
   workflow_dispatch:
+    inputs:
+      market:
+        description: "다시 만들 시장 (게이트를 건너뛴다)"
+        type: choice
+        options: [ALL, KR, US]
+        default: ALL
 
 concurrency:
   group: stock-pulse-data
@@ -24,21 +56,51 @@ jobs:
         with:
           ref: main
 
+      # pip install 앞에 둔다 — 표준 라이브러리만 쓰므로 건너뛰는 슬롯은
+      # 여기서 15초 만에 끝난다.
+      - name: Gate — 어느 시장을 다시 만들어야 하나
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          MARKET_INPUT: ${{ inputs.market }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "schedule" ]; then
+            echo "수동 실행 — 게이트 생략 (${MARKET_INPUT:-ALL})"
+            echo "markets=${MARKET_INPUT:-ALL}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          stale=""
+          for m in KR US; do
+            if [ "$(python3 -m pipeline.run sync-gate --market "$m")" = "true" ]; then
+              stale="${stale:+$stale,}$m"
+            fi
+          done
+          case "$stale" in
+            "KR,US") markets=ALL ;;
+            "")      markets="" ;;
+            *)       markets="$stale" ;;
+          esac
+          echo "markets=$markets" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.markets != ''
         with:
           python-version: "3.12"
           cache: pip
-
       - run: pip install -r requirements.txt
+        if: steps.gate.outputs.markets != ''
 
       - name: Rebuild site data
+        if: steps.gate.outputs.markets != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SITE_URL: ${{ vars.SITE_URL }}
-        run: python -m pipeline.run sync
+        run: python -m pipeline.run sync --market ${{ steps.gate.outputs.markets }}
 
-      # 이 잡은 26분쯤 걸려서 그 사이 main 이 움직일 확률이 가장 높다.
+      # 이 잡은 시장당 10분 넘게 걸려서 그 사이 main 이 움직일 수 있다.
       # 충돌 처리 근거는 .github/scripts/commit-data.sh 주석 참고.
       - name: Commit data
+        if: steps.gate.outputs.markets != ''
         run: |
-          bash .github/scripts/commit-data.sh "chore(data): sync $(date -u +'%Y-%m-%d %H:%M UTC')"
+          bash .github/scripts/commit-data.sh "chore(data): sync ${{ steps.gate.outputs.markets }} $(date -u +'%Y-%m-%d %H:%M UTC')"
