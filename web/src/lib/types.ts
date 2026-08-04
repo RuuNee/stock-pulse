@@ -145,8 +145,10 @@ export interface TickerAnalysis extends AnalysisBrief {
     /** 전저점~전고점 구간의 몇 % 지점인가 (0~100) */
     rangePos: number | null;
   };
-  /** 스윙 점 2개를 이은 대각 추세선. 조건이 안 맞으면 null. */
-  trendlines: { up: Trendline | null; down: Trendline | null };
+  /** 스윙 점 2개를 이은 대각 추세선. 조건이 안 맞으면 null.
+   *  이 필드가 생기기 전에 만들어진 종목 파일에는 아예 없다 —
+   *  data-sync 가 한 바퀴 돌기 전까지 배포된 데이터가 그렇다. */
+  trendlines?: { up: Trendline | null; down: Trendline | null };
   risk: { atrPct: number | null; band: string };
   disclaimer: string;
 }

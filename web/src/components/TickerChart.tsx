@@ -196,7 +196,7 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
     //     두 점 사이는 실선(실제로 이은 구간), 그 뒤 연장부는 점선으로 나눈다 —
     //     "관측"과 "추정"을 같은 선으로 그리면 뒤쪽을 근거로 착각한다.
     if (overlays.trend && detail.analysis) {
-      const { up, down } = detail.analysis.trendlines;
+      const { up = null, down = null } = detail.analysis.trendlines ?? {};
       for (const [tl, color] of [[up, upC], [down, downC]] as const) {
         if (!tl) continue;
         const t1 = toTime(tl.from.date);

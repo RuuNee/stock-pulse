@@ -241,8 +241,8 @@ function Range52({ levels, currency }: { levels: TickerAnalysis["levels"]; curre
 function Trendlines({ lines, currency }: { lines: TickerAnalysis["trendlines"]; currency: string }) {
   const s = useSettings();
   const rows = [
-    ["상승추세선", lines.up, s.upColor] as const,
-    ["하락추세선", lines.down, s.downColor] as const,
+    ["상승추세선", lines?.up, s.upColor] as const,
+    ["하락추세선", lines?.down, s.downColor] as const,
   ].filter(([, tl]) => tl);
   if (rows.length === 0) return null;
 
