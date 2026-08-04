@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
-from ..config import MACRO_SYMBOLS
-from ..util import log
+from ..config import DATA_DIR, MACRO_SYMBOLS
+from ..util import io, log
 from . import prices
 
 
+def _previous_entries() -> dict[str, dict]:
+    """직전에 쓴 지수 항목. 소스가 뒤로 갈 때 그대로 이어받는다."""
+    prev = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
+    return {i["key"]: i for i in prev.get("indices", []) if i.get("date")}
+
+
 def collect() -> list[dict]:
+    # 종목과 같은 이유 — 소스가 직전 세션 봉을 잠깐 빼고 줄 때가 있다
+    # (build/site_data.py `_no_backslide` 참고). 지수는 pulse 가 2시간마다
+    # 다시 만들어 저절로 복구되지만, 그 사이 홈 화면의 지수 날짜만 하루
+    # 뒤로 가서 종목 화면과 어긋나 보인다.
+    seen = _previous_entries()
     out: list[dict] = []
     for sym in MACRO_SYMBOLS:
         df = prices.fetch_ohlcv(sym["key"], years=1)
@@ -19,6 +30,14 @@ def collect() -> list[dict]:
             log.warn(f"macro skip: {sym['key']}")
             continue
         quote = prices.quote_from(df)
+        was = seen.get(sym["key"])
+        if was and quote.get("date") and quote["date"] < was["date"]:
+            # 빼 버리면 안 된다 — `_build_overview` 가 `indices` 를 통째로
+            # 교체하므로, 건너뛰면 그 지수가 홈 화면에서 사라진다.
+            log.warn(f"macro {sym['key']}: 소스가 뒤로 감 "
+                     f"({was['date']} → {quote['date']}) — 이전 값 유지")
+            out.append(was)
+            continue
         out.append({
             "key": sym["key"],
             "name": sym["name"],

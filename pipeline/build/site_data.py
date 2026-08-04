@@ -251,6 +251,42 @@ def _translate_ticker_news(details: list[dict]) -> None:
             _apply_trans(n)
 
 
+def _no_backslide(meta: dict, df):
+    """새로 받은 마지막 봉이 이미 가진 것보다 과거면 저장된 봉으로 되돌린다.
+
+    시세 소스가 직전 세션 봉을 일시적으로 빼고 줄 때가 있다. 2026-08-04 에
+    실제로 겪었다 (AAPL):
+
+        08-03 22:58 UTC (18:58 ET)  quote 2026-08-03  303.42   ← 정상
+        08-04 10:30 UTC (06:30 ET)  quote 2026-07-31  308.91   ← 08-03 을 잃음
+
+    이른 아침 ET 구간에서 소스가 전날 일봉을 잠깐 내렸고, 우리가 그걸 그대로
+    덮어써서 미장 하루치가 통째로 사라졌다. 화면에는 "미장이 7/31에 멈췄다"로
+    보였고, 그 상태가 다음 정기 실행까지 12시간 갔다.
+
+    **데이터는 뒤로 가지 않는다** — 소스를 못 믿을 때의 마지막 방어선이다.
+    종목을 건너뛰지는 않는다. `_build_ticker` 가 None 을 내면 그 종목이
+    `index.json` 에서 통째로 빠져 검색·목록에서 사라지기 때문이다. 낡은 값은
+    불편하지만 사라진 종목은 고장이다.
+    """
+    path = DATA_DIR / "tickers" / meta["market"] / f"{meta['code']}.json"
+    prev = io.read_json(path)
+    prev_date = ((prev or {}).get("quote") or {}).get("date")
+    if not prev_date:
+        return df
+
+    new_date = df.index[-1].strftime("%Y-%m-%d")
+    if new_date >= prev_date:
+        return df
+
+    restored = prices.from_rows(((prev.get("ohlcv") or {}).get("rows")) or [])
+    if restored is None or restored.empty:
+        return df
+    log.warn(f"{meta['market']} {meta['code']}: 소스가 뒤로 감 "
+             f"({prev_date} → {new_date}) — 저장된 봉 유지")
+    return restored
+
+
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     df = prices.fetch_ohlcv(meta["code"])
     # 정기 실행(07:30·21:30 UTC)은 양 시장이 다 닫힌 시각이라 안 걸리지만,
@@ -259,6 +295,7 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     df = prices.drop_unclosed(df, meta["market"])
     if df is None or df.empty:
         return None
+    df = _no_backslide(meta, df)
 
     quote = prices.quote_from(df)
     quote["marcap"] = meta.get("marcap")

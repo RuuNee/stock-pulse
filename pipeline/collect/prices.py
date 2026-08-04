@@ -65,6 +65,15 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=["Close"])
 
 
+def from_rows(rows: list[list]) -> pd.DataFrame | None:
+    """`to_rows` 의 역변환. 저장해 둔 종목 파일을 다시 프레임으로 되돌린다."""
+    if not rows:
+        return None
+    df = pd.DataFrame(rows, columns=["d", "Open", "High", "Low", "Close", "Volume"])
+    df.index = pd.to_datetime(df.pop("d"))
+    return _normalize(df)
+
+
 def to_rows(df: pd.DataFrame) -> list[list]:
     """Compact array-of-arrays form used by the site (schema §4)."""
     rows: list[list] = []
