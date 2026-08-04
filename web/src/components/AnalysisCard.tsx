@@ -182,6 +182,10 @@ function Range52({ levels, currency }: { levels: TickerAnalysis["levels"]; curre
   const s = useSettings();
   const { high52, low52, high52Pct, low52Pct, rangePos } = levels;
   if (high52 == null || low52 == null) return null;
+  // 퍼센트·게이지가 이 카드의 존재 이유다. 가격만 남으면 종목 화면 위쪽의
+  // "52주 최고/최저" 칸과 같은 말을 반복하는 셈이라 통째로 접는다.
+  // (필드가 추가되기 전에 만들어진 데이터에서 실제로 그 상태가 된다.)
+  if (high52Pct == null && low52Pct == null && rangePos == null) return null;
 
   return (
     <div className="card p-3" style={{ background: "var(--surface-2)" }}>
