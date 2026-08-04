@@ -19,13 +19,62 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+import json
+
 from .config import BRIEF_WINDOW, DATA_DIR
-from .util.dates import is_trading_day, next_session_date, now_et, now_kst
+from .util.dates import (
+    is_trading_day, next_session_date, now_et, now_kst, session_closed,
+)
 
 
 def local_now(market: str) -> datetime:
     """브리핑 기준이 되는 현지 시각. 국장은 KST, 미장은 ET."""
     return now_kst() if market == "KR" else now_et()
+
+
+def last_closed_session(market: str, now: datetime | None = None) -> date | None:
+    """지금 시점에서 **이미 끝난** 가장 최근 거래일."""
+    local = now or local_now(market)
+    day = local.date()
+    for _ in range(14):
+        if is_trading_day(market, day) and session_closed(market, day, local):
+            return day
+        day -= timedelta(days=1)
+    return None
+
+
+def data_stale(market: str, now: datetime | None = None,
+               data_dir: Path | None = None) -> tuple[bool, str]:
+    """이 시장의 종목 데이터가 마지막 마감 세션보다 뒤처졌는가.
+
+    data-sync 슬롯이 "지금 돌 필요가 있나"를 15초 안에 답하는 데 쓴다.
+    `pip install` 전에 판정해야 해서 표준 라이브러리만 쓴다 — pandas 를
+    불러오면 그것만으로 슬롯 하나가 1분이 된다.
+
+    2026-08-04 에 국장이 15:30 KST 에 마감했는데 스케줄러가 155분 밀려
+    19:13 KST 에야 데이터가 들어왔다. 그 3시간 43분 동안 화면은 전날 종가를
+    보여줬다(LS ELECTRIC 188,400 vs 실제 마감 197,000). 슬롯을 여러 개 깔고
+    이 판정으로 거르면 먼저 깨어난 슬롯이 처리한다.
+    """
+    session = last_closed_session(market, now)
+    if session is None:
+        return False, f"{market}: 최근 2주 안에 끝난 거래일 없음 — 건너뜀"
+
+    path = (data_dir or DATA_DIR) / "tickers" / "index.json"
+    try:
+        items = json.loads(path.read_text(encoding="utf-8")).get("items", [])
+    except (OSError, ValueError):
+        return True, f"{market}: index.json 을 읽을 수 없음 — 빌드합니다"
+
+    dates = [it.get("date") for it in items
+             if it.get("market") == market and it.get("date")]
+    if not dates:
+        return True, f"{market}: 데이터 없음 — 빌드합니다"
+
+    have = max(dates)
+    if have >= session.isoformat():
+        return False, f"{market}: 이미 {have} 까지 있음 — 건너뜁니다"
+    return True, f"{market}: {have} → {session.isoformat()} 갱신 필요"
 
 
 def brief_path(market: str, session: date, data_dir: Path | None = None) -> Path:

@@ -111,6 +111,16 @@ def _cmd_gate(args) -> int:
     return 0
 
 
+def _cmd_sync_gate(args) -> int:
+    """data-sync 슬롯이 지금 돌 필요가 있는지. stdout 은 true/false 만."""
+    from .gate import data_stale
+
+    run, reason = data_stale(args.market)
+    print(reason, file=sys.stderr)
+    print("true" if run else "false")
+    return 0
+
+
 def _cmd_status(args) -> int:
     from .status import run as status_run
     return status_run(_markets(args.market))
@@ -173,6 +183,11 @@ def main(argv=None) -> int:
     p_gate.add_argument("--market", required=True, help="KR | US")
     p_gate.add_argument("--force", action="store_true", help="manual run — skip time/dup checks")
     p_gate.set_defaults(func=_cmd_gate)
+
+    p_sgate = sub.add_parser("sync-gate",
+                             help="print true/false — 이 시장 데이터를 지금 다시 만들어야 하나?")
+    p_sgate.add_argument("--market", required=True, help="KR | US")
+    p_sgate.set_defaults(func=_cmd_sync_gate)
 
     p_status = sub.add_parser("status", help="브리핑 상태 — 나갔는지, 다음은 언제인지")
     p_status.add_argument("--market", help="KR | US | ALL (default ALL)")

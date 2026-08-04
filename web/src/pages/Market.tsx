@@ -18,10 +18,21 @@ export default function Market() {
   const ov = overview.data;
   const list = (tickers.data ?? []).filter((t) => t.market === m);
   const title = m === "KR" ? "국장 (국내)" : "미장 (미국)";
+  // 목록의 모든 가격이 같은 날 종가다. 행마다 날짜를 붙이면 시끄러우니
+  // 제목 옆에 한 번만 적는다. 없으면 사용자가 오늘 값으로 읽는다.
+  const asOf = list.reduce<string | null>(
+    (latest, t) => (t.date && (!latest || t.date > latest) ? t.date : latest), null);
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="text-2xl font-bold">{title}</h1>
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <h1 className="text-2xl font-bold">{title}</h1>
+        {asOf && (
+          <span className="text-sm tabular-nums" style={{ color: "var(--muted)" }}>
+            {asOf} 마감 기준
+          </span>
+        )}
+      </div>
 
       {ov?.marketMood[m] && <MoodCard title={m === "KR" ? "국내" : "미국"} mood={ov.marketMood[m]} />}
 

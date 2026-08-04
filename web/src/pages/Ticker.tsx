@@ -74,9 +74,17 @@ export default function Ticker() {
             <span className="chip" style={{ padding: "2px 8px", fontSize: 11 }}>{d.exchange}</span>
             {d.sector && <span className="chip" style={{ padding: "2px 8px", fontSize: 11 }}>{d.sector}</span>}
           </div>
-          <div className="mt-1.5 flex items-baseline gap-3">
+          <div className="mt-1.5 flex items-baseline gap-3 flex-wrap">
             <span className="text-2xl font-bold tabular-nums">{fmtPrice(q.close, d.currency)}</span>
             <ChangeBadge pct={q.changePct} size="lg" />
+            {/* 어느 날 종가인지 값 바로 옆에 적는다. 장 마감과 갱신 사이에는
+                항상 공백이 있고(스케줄러 지연 실측 6~202분), 그때 화면 숫자를
+                오늘 종가로 읽으면 틀린다 — 2026-08-04 실제 신고. */}
+            {q.date && (
+              <span className="text-xs tabular-nums" style={{ color: "var(--muted)" }}>
+                {q.date} 마감
+              </span>
+            )}
           </div>
           <div className="text-xs mt-1" style={{ color: "var(--muted)" }}>
             <Term k="volume">거래량</Term> {fmtVolume(q.volume)} ({volLabel(q.volumeVsAvg20)})
