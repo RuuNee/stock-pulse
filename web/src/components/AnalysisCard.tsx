@@ -74,6 +74,9 @@ export default function AnalysisCard({ a, currency }: { a: TickerAnalysis; curre
               sub={a.risk.atrPct == null ? "" : `하루 평균 ±${a.risk.atrPct}%`} />
       </div>
 
+      <Range52 levels={a.levels} currency={currency} />
+      <Trendlines lines={a.trendlines} currency={currency} />
+
       {/* 기법별 판정 */}
       <div>
         <div className="flex items-center gap-2 mb-2">
@@ -165,6 +168,108 @@ function Level({
           현재가 대비 {gap > 0 ? "+" : ""}{gap.toFixed(1)}%
         </div>
       )}
+    </div>
+  );
+}
+
+/** 52주 고·저 대비 현재가의 자리.
+ *
+ *  숫자 두 개(전고점/전저점 대비)와 게이지를 같이 둔다. 두 %만 보면 "그래서
+ *  위쪽이야 아래쪽이야"가 한 번에 안 들어오고, 게이지만 두면 "얼마나 빠졌나"를
+ *  못 읽는다. 서로 다른 질문에 답하는 값이라 둘 다 필요하다.
+ */
+function Range52({ levels, currency }: { levels: TickerAnalysis["levels"]; currency: string }) {
+  const s = useSettings();
+  const { high52, low52, high52Pct, low52Pct, rangePos } = levels;
+  if (high52 == null || low52 == null) return null;
+
+  return (
+    <div className="card p-3" style={{ background: "var(--surface-2)" }}>
+      <h3 className="text-sm font-bold mb-2">52주 고·저 대비</h3>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <div className="text-xs" style={{ color: "var(--muted)" }}>전고점 대비</div>
+          <div className="font-semibold tabular-nums" style={{ color: s.downColor }}>
+            {high52Pct == null ? "-" : `${high52Pct > 0 ? "+" : ""}${high52Pct.toFixed(1)}%`}
+          </div>
+          <div className="text-[11px] tabular-nums" style={{ color: "var(--muted)" }}>
+            {fmtPrice(high52, currency)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs" style={{ color: "var(--muted)" }}>전저점 대비</div>
+          <div className="font-semibold tabular-nums" style={{ color: s.upColor }}>
+            {low52Pct == null ? "-" : `${low52Pct > 0 ? "+" : ""}${low52Pct.toFixed(1)}%`}
+          </div>
+          <div className="text-[11px] tabular-nums" style={{ color: "var(--muted)" }}>
+            {fmtPrice(low52, currency)}
+          </div>
+        </div>
+      </div>
+
+      {rangePos != null && (
+        <div className="mt-3">
+          <div
+            className="relative h-2 rounded-full overflow-hidden"
+            style={{ background: `linear-gradient(90deg, ${s.upColor}33, ${s.downColor}33)` }}
+          >
+            <div
+              className="absolute top-1/2 w-1 h-4 rounded-full"
+              // 0%·100% 에서 마커 절반이 잘리지 않게 안쪽으로 묶는다.
+              style={{
+                left: `calc(${Math.min(99, Math.max(1, rangePos))}% - 2px)`,
+                transform: "translateY(-50%)",
+                background: "var(--text)",
+              }}
+            />
+          </div>
+          <div className="flex justify-between text-[11px] mt-1" style={{ color: "var(--muted)" }}>
+            <span>저점</span>
+            <span className="font-semibold tabular-nums" style={{ color: "var(--text)" }}>
+              {rangePos.toFixed(0)}% 지점
+            </span>
+            <span>고점</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 대각 추세선 — 차트에 그린 선을 숫자로도 적는다. */
+function Trendlines({ lines, currency }: { lines: TickerAnalysis["trendlines"]; currency: string }) {
+  const s = useSettings();
+  const rows = [
+    ["상승추세선", lines.up, s.upColor] as const,
+    ["하락추세선", lines.down, s.downColor] as const,
+  ].filter(([, tl]) => tl);
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card p-3" style={{ background: "var(--surface-2)" }}>
+      <h3 className="text-sm font-bold mb-2">
+        <Term k="trendline">추세선</Term>
+      </h3>
+      <div className="flex flex-col gap-2">
+        {rows.map(([label, tl, color]) => (
+          <div key={label} className="flex items-baseline justify-between gap-2 text-sm">
+            <span style={{ color }}>{label}</span>
+            <span className="tabular-nums text-right">
+              오늘 {fmtPrice(tl!.now, currency)}
+              {tl!.gapPct != null && (
+                <span className="ml-1.5 text-[11px]" style={{ color: "var(--muted)" }}>
+                  현재가 {tl!.gapPct > 0 ? "+" : ""}{tl!.gapPct.toFixed(1)}%
+                </span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] mt-2" style={{ color: "var(--muted)" }}>
+        {rows.map(([label, tl]) => `${label} ${tl!.from.date}~${tl!.to.date}`).join(" · ")} 두 점을
+        이어 오늘까지 연장한 값입니다.
+      </p>
     </div>
   );
 }

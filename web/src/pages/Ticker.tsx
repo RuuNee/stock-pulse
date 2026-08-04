@@ -29,6 +29,7 @@ const OVERLAY_CHIPS: { key: keyof Overlays; label: string; hint: string }[] = [
   { key: "macd", label: "MACD", hint: "추세 전환을 보는 보조 패널" },
   { key: "rsi", label: "RSI", hint: "과열·침체를 보는 보조 패널" },
   { key: "levels", label: "지지·저항", hint: "분석이 잡은 기준선을 가로줄로" },
+  { key: "trend", label: "추세선", hint: "스윙 고·저점을 이은 대각 추세선" },
 ];
 
 const CONF: Record<string, [string, string]> = {
@@ -45,7 +46,7 @@ export default function Ticker() {
   const { data, loading, error } = useAsync(() => api.ticker(m, code), [m, code]);
   const [range, setRange] = useState(132);
   const [overlays, setOverlays] = useState<Overlays>({
-    markers: true, ma: false, bb: false, macd: false, rsi: false, levels: true,
+    markers: true, ma: false, bb: false, macd: false, rsi: false, levels: true, trend: true,
   });
   const [active, setActive] = useState<string | null>(null);
   const [watched, setWatched] = useState(() => isWatched(m, code));

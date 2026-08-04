@@ -406,6 +406,20 @@ TA_SIGNAL_BANDS = ((45, "strongBuy"), (15, "buy"), (-15, "neutral"), (-45, "sell
 
 TA_BRIEF_PICKS = 4          # 브리핑에 싣는 강세/약세 종목 수 (각각)
 
+# 추세선 — 스윙 고점 2개(하락추세선) / 저점 2개(상승추세선)를 이은 대각선.
+# 수평 지지·저항(`TA_LEVEL_*`)과 다른 것을 잡는다: 가격대가 아니라 *기울기*다.
+TA_TREND_LOOKBACK = 120     # 이 구간 안에서 스윙 점을 찾는다 (약 반년)
+TA_TREND_PIVOT_SPAN = 5     # 앞뒤 이만큼보다 높으면(낮으면) 스윙 점
+TA_TREND_MIN_APART = 8      # 두 점이 이만큼 떨어져야 선으로 인정한다.
+                            # 붙어 있는 두 점을 이으면 기울기가 튀어서
+                            # 며칠 뒤 projection 이 말이 안 되는 값이 된다.
+TA_TREND_NEAR_PCT = 2.5     # 추세선 근접 판정 (%)
+TA_TREND_BREAK_GRACE = 10   # 선을 깬 뒤 이만큼까지는 "방금 이탈"로 본다.
+                            # 이걸 넘게 반대편에 머물면 사람은 그 선을 더
+                            # 이상 안 그린다 — 죽은 선으로 버린다.
+TA_TREND_RESPECT_PCT = 0.3  # 중간 구간에서 이 비율 넘게 뚫렸으면 애초에
+                            # 지켜진 적 없는 선이다.
+
 NEWS_KEEP_DAYS = 3         # how much of the general feed to publish
 NEWS_MAX_ITEMS = 400
 

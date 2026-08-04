@@ -138,9 +138,27 @@ export interface TickerAnalysis extends AnalysisBrief {
     resistanceGapPct: number | null;
     high52: number | null;
     low52: number | null;
+    /** 전고점 대비 (음수 = 아래) */
+    high52Pct: number | null;
+    /** 전저점 대비 (양수 = 위) */
+    low52Pct: number | null;
+    /** 전저점~전고점 구간의 몇 % 지점인가 (0~100) */
+    rangePos: number | null;
   };
+  /** 스윙 점 2개를 이은 대각 추세선. 조건이 안 맞으면 null. */
+  trendlines: { up: Trendline | null; down: Trendline | null };
   risk: { atrPct: number | null; band: string };
   disclaimer: string;
+}
+
+export interface Trendline {
+  from: { date: string; price: number };
+  to: { date: string; price: number };
+  /** 마지막 봉까지 연장했을 때의 값 */
+  now: number;
+  slopePerDay: number;
+  /** 현재가가 추세선 대비 몇 % (양수 = 선 위) */
+  gapPct: number | null;
 }
 
 export interface Quote {

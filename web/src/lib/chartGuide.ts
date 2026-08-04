@@ -1,6 +1,6 @@
 // 도움말 > 차트분석 탭의 내용.
 //
-// 여기 실린 11가지는 pipeline/analyze/technical.py 가 실제로 판정하는 기법과
+// 여기 실린 12가지는 pipeline/analyze/technical.py 가 실제로 판정하는 기법과
 // 1:1로 맞춰져 있다. 종목 화면의 "기법별 판정" 줄을 보고 여기로 오면 같은
 // 이름이 나와야 한다 — 이름이 어긋나면 도움말이 아니라 혼란이 된다.
 //
@@ -159,6 +159,37 @@ function crossIndex(fast: (number | null)[], slow: (number | null)[], dir: "up" 
 function firstAbove(price: number[], level: number, from = 0): number {
   for (let i = from; i < price.length; i++) if (price[i] > level) return i;
   return price.length - 1;
+}
+
+/** 스윙 점 — `technical.py` 의 `_is_pivot` 과 같은 규칙(앞뒤 span 봉의 극값). */
+function pivots(price: number[], high: boolean, span = 5): number[] {
+  const out: number[] = [];
+  for (let i = span; i < price.length - span; i++) {
+    const w = price.slice(i - span, i + span + 1);
+    if (price[i] === (high ? Math.max(...w) : Math.min(...w))) out.push(i);
+  }
+  return out;
+}
+
+/** 스윙 점 두 개를 이어 끝까지 연장한 추세선.
+ *
+ *  그림도 실제 알고리즘과 같은 방법으로 그린다 — 눈대중으로 좌표를 박아 두면
+ *  파형을 손볼 때마다 설명과 그림이 어긋난다. */
+function trendRay(price: number[], high: boolean): (number | null)[] {
+  const ps = pivots(price, high);
+  const line: (number | null)[] = price.map(() => null);
+  for (let a = ps.length - 1; a > 0; a--) {
+    for (let b = a - 1; b >= 0; b--) {
+      const [i1, i2] = [ps[b], ps[a]];
+      if (i2 - i1 < 8) continue;
+      const [v1, v2] = [price[i1], price[i2]];
+      if (high ? v2 >= v1 : v2 <= v1) continue; // 하락선은 낮아지는 고점, 상승선은 높아지는 저점
+      const slope = (v2 - v1) / (i2 - i1);
+      for (let i = i1; i < price.length; i++) line[i] = v1 + slope * (i - i1);
+      return line;
+    }
+  }
+  return line;
 }
 
 export interface GuideItem {
@@ -431,6 +462,25 @@ export const CHART_GUIDE: GuideItem[] = [
         { value: Math.min(...shown(P.box)), color: "#16a34a", label: "지지" },
       ],
       caption: "위아래 점선 사이를 오가는 박스권 — 위에서 막히면 저항, 아래에서 받쳐지면 지지",
+    },
+  },
+  {
+    key: "trendline",
+    name: "추세선",
+    group: "가격대",
+    what: "점점 높아지는 저점 두 개를 이으면 상승추세선, 점점 낮아지는 고점 두 개를 이으면 하락추세선입니다. 지지·저항이 \"얼마\"라는 가로선이라면 추세선은 \"기울기\"를 가진 대각선이라, 시간이 갈수록 기준 가격이 같이 올라가거나 내려갑니다.",
+    read: [
+      { tone: "bullish", text: "상승추세선 위에서 받쳐지면 저점을 계속 높이는 흐름이 살아 있는 것." },
+      { tone: "bullish", text: "하락추세선을 위로 뚫으면 내리막이 꺾이는 자리로 봅니다." },
+      { tone: "bearish", text: "상승추세선을 아래로 깨면 아직 어떤 지지선에도 닿기 전에 흐름이 먼저 꺾인 신호." },
+    ],
+    caveat: "선을 어디에 긋느냐에 따라 결론이 달라집니다. 이 사이트는 최근 120거래일의 스윙 점만 쓰고, 그은 구간보다 멀리 연장하지 않으며, 깨진 뒤 10거래일 넘게 반대편에 머문 선은 버립니다. 그래도 두 점으로 그은 선일 뿐이라 세 번째 접점에서 그대로 맞는다는 보장은 없습니다.",
+    chart: {
+      price: P.up,
+      overlays: [
+        { points: trendRay(P.up, false), color: "#16a34a", label: "상승추세선" },
+      ],
+      caption: "높아지는 저점 두 개를 이어 오른쪽으로 연장 — 이 선을 딛고 오르는 동안은 추세가 살아 있다고 본다",
     },
   },
 ];

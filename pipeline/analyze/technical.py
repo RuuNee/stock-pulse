@@ -4,7 +4,7 @@
 
 1. **지표 시계열** (`series`) — 차트에 그대로 겹쳐 그릴 수 있게 OHLCV 행과
    1:1 정렬된 배열을 만든다. 이동평균 4종 · 볼린저밴드 · MACD · RSI.
-2. **기법별 판정** (`analyze`) — 마지막 봉 기준으로 기법 11가지를 각각
+2. **기법별 판정** (`analyze`) — 마지막 봉 기준으로 기법 12가지를 각각
    강세/약세/중립으로 읽고, 가중 합산해 -100~+100 종합 점수를 낸다.
 3. **행동 신호** — "지금 이 차트가 교과서적으로 어떤 국면인가"를 한 줄로
    옮긴다. 추격 매수 · 추가 매수(눌림목) · 분할 차익실현 · 손절 유의 · 관망.
@@ -34,6 +34,12 @@ from ..config import (
     TA_RSI_OVERBOUGHT,
     TA_RSI_OVERSOLD,
     TA_SIGNAL_BANDS,
+    TA_TREND_BREAK_GRACE,
+    TA_TREND_LOOKBACK,
+    TA_TREND_MIN_APART,
+    TA_TREND_NEAR_PCT,
+    TA_TREND_PIVOT_SPAN,
+    TA_TREND_RESPECT_PCT,
     TA_VOLUME_SURGE,
 )
 
@@ -180,6 +186,7 @@ def analyze(df: pd.DataFrame) -> dict | None:
         },
         "signals": signals,
         "levels": ctx["levels"],
+        "trendlines": ctx["trendlines"],
         "risk": ctx["risk"],
         "disclaimer": DISCLAIMER,
     }
@@ -215,6 +222,7 @@ def _context(df: pd.DataFrame) -> dict:
 
     ctx["trend"] = _trend_block(ctx)
     ctx["levels"] = _levels(df, price)
+    ctx["trendlines"] = _trendlines(df, price)
     ctx["risk"] = _risk(ctx)
     return ctx
 
@@ -294,8 +302,32 @@ def _levels(df: pd.DataFrame, price: float) -> dict:
         "resistance": _round(resistance),
         "supportGapPct": _round(_pct(support, price), 2),
         "resistanceGapPct": _round(_pct(resistance, price), 2),
-        "high52": _round(_f(df["High"].tail(252).max())),
-        "low52": _round(_f(df["Low"].tail(252).min())),
+        **_range52(df, price),
+    }
+
+
+def _range52(df: pd.DataFrame, price: float) -> dict:
+    """52주 고·저 대비 현재가의 자리.
+
+    세 숫자를 같이 낸다. 셋 다 같은 재료(고점·저점·현재가)에서 나오지만
+    답하는 질문이 다르다.
+
+      high52Pct  전고점에서 얼마나 빠졌나  — "회복까지 얼마"
+      low52Pct   전저점에서 얼마나 올랐나  — "바닥에서 얼마나 왔나"
+      rangePos   저점~고점 구간의 몇 % 지점 — "위쪽인가 아래쪽인가" 한 눈에
+
+    고점과 저점이 같으면(상장 직후 등) `rangePos` 는 `None`. 0 으로 나누지
+    않으려는 것도 있지만, 그 상태에서 "0% 지점"은 틀린 말이다.
+    """
+    high52 = _f(df["High"].tail(252).max())
+    low52 = _f(df["Low"].tail(252).min())
+    span = (high52 - low52) if _all(high52, low52) else None
+    return {
+        "high52": _round(high52),
+        "low52": _round(low52),
+        "high52Pct": _round(_pct(price, high52), 2),
+        "low52Pct": _round(_pct(price, low52), 2),
+        "rangePos": _round((price - low52) / span * 100, 1) if span else None,
     }
 
 
@@ -304,6 +336,103 @@ def _is_pivot(s: pd.Series, i: int, *, high: bool, span: int = 5) -> bool:
         return False
     window = s.iloc[i - span:i + span + 1]
     return float(s.iloc[i]) == (float(window.max()) if high else float(window.min()))
+
+
+def _pivots(s: pd.Series, *, high: bool) -> list[tuple[int, float]]:
+    """스윙 점 목록 — (위치, 값). 오래된 것부터."""
+    span = TA_TREND_PIVOT_SPAN
+    return [(i, float(s.iloc[i])) for i in range(len(s))
+            if _is_pivot(s, i, high=high, span=span)]
+
+
+def _trendlines(df: pd.DataFrame, price: float) -> dict:
+    """대각 추세선 — 스윙 고점 2개(하락)/저점 2개(상승)를 이은 선.
+
+    수평 지지·저항(`_levels`)이 "얼마"를 본다면 이쪽은 **기울기**를 본다.
+    교과서가 그리는 방식 그대로다:
+
+      - 상승추세선 = 점점 높아지는 저점 두 개를 잇는다 (지지 역할)
+      - 하락추세선 = 점점 낮아지는 고점 두 개를 잇는다 (저항 역할)
+
+    조건이 안 맞으면 `None` 을 낸다. 저점이 낮아지고 있는데 억지로 이으면
+    그건 상승추세선이 아니라 그냥 두 점을 지나는 직선이고, 사람이 차트에
+    그어 보는 선과 달라서 오히려 판단을 흐린다. `_levels` 와 같은 원칙이다.
+
+    선은 **마지막 봉까지 연장**해서 오늘 값(`now`)을 낸다. 추세선이 유용한
+    건 "오늘 이 가격에서 만난다"이지 과거 두 점이 아니다.
+    """
+    window = df.tail(TA_TREND_LOOKBACK)
+    if len(window) < TA_TREND_MIN_APART * 2:
+        return {"up": None, "down": None}
+
+    dates = [ts.strftime("%Y-%m-%d") for ts in window.index]
+    last = len(window) - 1
+
+    closes = window["Close"].to_numpy(dtype=float)
+
+    def line(points: list[tuple[int, float]], rising: bool) -> dict | None:
+        # 최근 두 점부터 거슬러 올라가며 "방향이 맞는" 짝을 찾는다.
+        for a in range(len(points) - 1, 0, -1):
+            i2, v2 = points[a]
+            for b in range(a - 1, -1, -1):
+                i1, v1 = points[b]
+                span = i2 - i1
+                if span < TA_TREND_MIN_APART:
+                    continue
+                if (v2 > v1) is not rising:
+                    continue
+
+                # 그은 구간보다 더 멀리 연장하지 않는다. 두 점 사이가 20봉인
+                # 선을 100봉 뒤까지 늘이면 기울기 오차가 그대로 100배가 된다 —
+                # 실제로 삼성전자의 2~3월 고점 두 개가 8월까지 연장돼 현재가
+                # 대비 -58% 인 "저항선"으로 나왔다.
+                if last - i2 > max(span, TA_TREND_MIN_APART):
+                    continue
+
+                slope = (v2 - v1) / span
+                now = v2 + slope * (last - i2)
+                if now <= 0:      # 연장선이 0 아래로 내려가면 의미 없는 값이다
+                    continue
+
+                # 선이 살아 있는지 본다. "뚫렸다"를 한 덩어리로 세면 안 된다 —
+                # 방금 깬 것(=우리가 알리고 싶은 신호)과 몇 달 전에 죽은 선이
+                # 같은 값으로 나오기 때문이다. 그래서 둘로 나눈다.
+                violated = [
+                    (closes[j] < lvl) if rising else (closes[j] > lvl)
+                    for j in range(i2 + 1, last + 1)
+                    if (lvl := v2 + slope * (j - i2)) > 0
+                ]
+
+                # ① 끝에서부터 이어진 위반 = 방금 이탈. 유예 안이면 살려 둔다.
+                run = 0
+                for flag in reversed(violated):
+                    if not flag:
+                        break
+                    run += 1
+                if run > TA_TREND_BREAK_GRACE:
+                    continue    # 깨고 나서 계속 반대편 — 죽은 선
+
+                # ② 그 앞 구간에서 자주 뚫렸으면 애초에 지켜진 적 없는 선이다.
+                #    봉이 몇 개 안 될 때는 판정하지 않는다 — 3봉 중 1봉이면
+                #    33% 지만 그걸로 선의 유효성을 말할 수는 없다.
+                middle = violated[:len(violated) - run]
+                if (len(middle) >= TA_TREND_MIN_APART
+                        and sum(middle) / len(middle) > TA_TREND_RESPECT_PCT):
+                    continue
+
+                return {
+                    "from": {"date": dates[i1], "price": _round(v1)},
+                    "to": {"date": dates[i2], "price": _round(v2)},
+                    "now": _round(now),
+                    "slopePerDay": _round(slope, 4),
+                    "gapPct": _round(_pct(price, now), 2),
+                }
+        return None
+
+    return {
+        "up": line(_pivots(window["Low"], high=False), rising=True),
+        "down": line(_pivots(window["High"], high=True), rising=False),
+    }
 
 
 def _risk(ctx: dict) -> dict:
@@ -619,9 +748,62 @@ def _c_levels(ctx: dict) -> dict | None:
                 "지지선과 저항선 사이에 있습니다. 어느 쪽도 임박하지 않았습니다.")
 
 
+def _c_trendline(ctx: dict) -> dict | None:
+    """⑫ 추세선 — 대각선을 딛고 있나, 눌리고 있나.
+
+    수평 지지·저항(⑪)과 겹쳐 보이지만 다른 것을 잡는다. 저점을 계속 높이며
+    오르던 종목이 그 선을 깨는 순간은 가격이 아직 어떤 수평 지지선에도 닿기
+    전이다 — 추세선이 먼저 알려 주는 게 그 지점이다.
+
+    돌파·이탈을 근접보다 세게 본다. 추세선은 "닿았다"보다 "깨졌다"가 훨씬
+    분명한 신호다.
+    """
+    lines, price = ctx["trendlines"], ctx["price"]
+    up, down = lines.get("up"), lines.get("down")
+    near = TA_TREND_NEAR_PCT
+
+    # 상승추세선 이탈 — 저점을 높여 오던 흐름이 끊겼다.
+    if up and up["gapPct"] is not None and up["gapPct"] < 0:
+        return _sig("trendline", "상승추세선 이탈", "가격대", "bearish",
+                    min(1.0, 0.6 + abs(up["gapPct"]) / 10), 3,
+                    f"추세선 {up['now']:,.0f} 대비 {up['gapPct']:+.1f}%",
+                    "저점을 차례로 높여 오던 선을 아래로 깼습니다. 상승 추세의 전제가 "
+                    "무너진 자리로 보며, 되돌아 올라서지 못하면 추세가 바뀐 것으로 읽습니다.")
+
+    # 하락추세선 돌파 — 고점을 낮춰 오던 흐름을 뚫었다.
+    if down and down["gapPct"] is not None and down["gapPct"] > 0:
+        return _sig("trendline", "하락추세선 돌파", "가격대", "bullish",
+                    min(1.0, 0.6 + down["gapPct"] / 10), 3,
+                    f"추세선 {down['now']:,.0f} 대비 {down['gapPct']:+.1f}%",
+                    "고점을 차례로 낮춰 오던 선을 위로 뚫었습니다. 하락 추세가 꺾이는 "
+                    "자리로 보지만, 다시 선 아래로 밀리면 돌파 실패입니다.")
+
+    if up and up["gapPct"] is not None and up["gapPct"] <= near:
+        return _sig("trendline", "상승추세선 지지", "가격대", "bullish", 0.5, 2,
+                    f"추세선까지 {up['gapPct']:+.1f}%",
+                    "저점을 높여 온 선 바로 위에 있습니다. 여기서 받쳐 주면 추세가 "
+                    "유지되는 것으로 보고, 깨면 판단이 뒤집힙니다.")
+
+    if down and down["gapPct"] is not None and down["gapPct"] >= -near:
+        return _sig("trendline", "하락추세선 저항", "가격대", "bearish", 0.5, 2,
+                    f"추세선까지 {down['gapPct']:+.1f}%",
+                    "고점을 낮춰 온 선 바로 아래입니다. 이 선에 막혀 되밀리는 일이 "
+                    "반복돼 왔고, 뚫으면 추세 전환 신호로 봅니다.")
+
+    if up or down:
+        which = "상승" if up else "하락"
+        gap = (up or down)["gapPct"]
+        return _sig("trendline", f"{which}추세선 유효", "가격대", "neutral", 0.0, 1,
+                    f"추세선까지 {gap:+.1f}%" if gap is not None else "-",
+                    f"{which}추세선에서 떨어져 있습니다. 선에 닿거나 깰 때 다시 봅니다.")
+
+    return None   # 방향이 맞는 스윙 점 짝이 없으면 선을 억지로 긋지 않는다
+
+
 _CHECKS = (
     _c_alignment, _c_cross, _c_disparity, _c_slope, _c_macd, _c_rsi,
     _c_bollinger, _c_stochastic, _c_volume, _c_breakout, _c_levels,
+    _c_trendline,
 )
 
 
@@ -631,7 +813,7 @@ _CHECKS = (
 def _composite(signals: list[dict]) -> int:
     """가중 평균을 -100~+100 으로. 중립 신호도 분모에 들어가 점수를 눌러 준다.
 
-    (그래야 '지표 11개 중 2개만 강세'인 종목이 강한 신호로 둔갑하지 않는다.)
+    (그래야 '지표 12개 중 2개만 강세'인 종목이 강한 신호로 둔갑하지 않는다.)
     """
     total = sum(s["weight"] for s in signals) or 1
     got = sum(_DIR[s["verdict"]] * s["weight"] * s["strength"] for s in signals)
@@ -709,7 +891,10 @@ def _summary(ctx: dict, signals: list[dict], score: int) -> str:
                     reverse=True)
     top = [s for s in ranked if s["verdict"] != "neutral"][:3]
 
-    lines = [f"11가지 차트 기법 중 강세 {sum(1 for s in signals if s['verdict'] == 'bullish')}개 · "
+    # 개수를 세어서 쓴다. 판정기는 재료가 없으면 None 을 내므로 종목마다
+    # 실제 신호 수가 다르다 — 상수로 박아 두면 조용히 틀린 문장이 나간다.
+    lines = [f"{len(signals)}가지 차트 기법 중 강세 "
+             f"{sum(1 for s in signals if s['verdict'] == 'bullish')}개 · "
              f"약세 {sum(1 for s in signals if s['verdict'] == 'bearish')}개로 "
              f"종합 {score:+d}점입니다."]
     if top:

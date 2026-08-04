@@ -26,6 +26,7 @@ export interface Overlays {
   macd: boolean; // MACD 보조 패널
   rsi: boolean; // RSI 보조 패널
   levels: boolean; // 지지·저항 가격선
+  trend: boolean; // 대각 추세선
 }
 
 interface Props {
@@ -190,6 +191,43 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
       }
     }
 
+    // --- 추세선: 스윙 점 2개를 잇고 마지막 봉까지 연장한 대각선 ---
+    //     수평 지지·저항과 달리 기울기가 있어서 priceLine 으로는 못 그린다.
+    //     두 점 사이는 실선(실제로 이은 구간), 그 뒤 연장부는 점선으로 나눈다 —
+    //     "관측"과 "추정"을 같은 선으로 그리면 뒤쪽을 근거로 착각한다.
+    if (overlays.trend && detail.analysis) {
+      const { up, down } = detail.analysis.trendlines;
+      for (const [tl, color] of [[up, upC], [down, downC]] as const) {
+        if (!tl) continue;
+        const t1 = toTime(tl.from.date);
+        const t2 = toTime(tl.to.date);
+        // 구간 밖(줌 아웃이 짧을 때)이면 그리지 않는다.
+        const firstT = toTime(slice[0][0] as string);
+        if (t2 < firstT) continue;
+
+        const drawn = chart.addSeries(LineSeries, {
+          color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        });
+        drawn.setData([
+          { time: t1, value: tl.from.price },
+          { time: t2, value: tl.to.price },
+        ]);
+
+        const lastRow = slice[slice.length - 1];
+        const tLast = toTime(lastRow[0] as string);
+        if (tLast > t2) {
+          const ext = chart.addSeries(LineSeries, {
+            color: `${color}88`, lineWidth: 2, lineStyle: LineStyle.Dashed,
+            priceLineVisible: false, lastValueVisible: true,
+          });
+          ext.setData([
+            { time: t2, value: tl.to.price },
+            { time: tLast, value: tl.now },
+          ]);
+        }
+      }
+    }
+
     // --- 보조 패널: MACD / RSI. 가격과 단위가 달라 별도 pane 에 올린다. ---
     const paneWeights: number[] = [MAIN_PANE_PX];
 
@@ -311,15 +349,24 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
   }, [
     detail.code, range, s.theme, s.colorMode,
     overlays.markers, overlays.ma, overlays.bb, overlays.macd, overlays.rsi, overlays.levels,
+    overlays.trend,
   ]);
 
   const upC = s.colorMode === "kr" ? "#e11d48" : "#16a34a";
   const downC = s.colorMode === "kr" ? "#2563eb" : "#dc2626";
   const extra = (overlays.macd ? MACD_PANE_PX : 0) + (overlays.rsi ? RSI_PANE_PX : 0);
 
+  const tl = detail.analysis?.trendlines;
   const priceLegend: IndicatorStyle[] = [
     ...(overlays.ma ? MA_KEYS.map((k) => INDICATOR[k]) : []),
     ...(overlays.bb ? [INDICATOR.bb] : []),
+    // 추세선은 종목마다 있을 수도 없을 수도 있어서 실제로 그린 것만 넣는다.
+    ...(overlays.trend && tl?.up
+      ? [{ label: "상승추세선", color: upC }]
+      : []),
+    ...(overlays.trend && tl?.down
+      ? [{ label: "하락추세선", color: downC }]
+      : []),
   ];
 
   return (
