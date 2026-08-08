@@ -86,6 +86,31 @@ def test_scheduled_run_always_sends(name):
 
 
 @pytest.mark.parametrize("name", BRIEFS)
+def test_late_flag_reaches_the_brief_command(name):
+    """gate 가 '지각'이라고 해도 `--late` 가 안 붙으면 메시지에 표시가 사라진다."""
+    commands = run_lines(load(WORKFLOW_DIR / name))
+    sends = [c for c in commands if "pipeline.run brief" in c]
+    assert sends, f"{name}: 브리핑 발송 스텝을 못 찾았습니다"
+    for command in sends:
+        assert "steps.gate.outputs.late" in command, \
+            f"{name}: 발송 명령에 지각 플래그가 전달되지 않습니다"
+
+
+@pytest.mark.parametrize("name", BRIEFS)
+def test_dispatch_can_run_under_the_gate(name):
+    """외부 스케줄러(cron-job.org)가 부르는 경로. `force=false` 로 왔을 때
+    `--force` 가 그대로 붙으면 휴장일에도 브리핑이 나간다."""
+    data = load(WORKFLOW_DIR / name)
+    inputs = (triggers(data)["workflow_dispatch"] or {}).get("inputs") or {}
+    assert "force" in inputs, f"{name}: workflow_dispatch 에 force 입력이 없습니다"
+
+    gate = [s for s in data["jobs"]["brief"]["steps"] if s.get("id") == "gate"][0]
+    assert "FORCE_INPUT" in (gate.get("env") or {}), f"{name}: gate 가 force 를 못 받습니다"
+    assert '"${FORCE_INPUT:-true}" != "false"' in gate["run"], \
+        f"{name}: force=false 가 --force 를 막지 않습니다"
+
+
+@pytest.mark.parametrize("name", BRIEFS)
 def test_brief_has_own_concurrency_group(name):
     """data-sync(26분) 뒤에 큐잉되면 발송 창을 통째로 놓친다."""
     group = load(WORKFLOW_DIR / name)["concurrency"]["group"]

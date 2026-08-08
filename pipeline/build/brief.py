@@ -25,7 +25,7 @@ _BULLISH = ("strongBuy", "buy")
 _BEARISH = ("strongSell", "sell")
 
 
-def build_brief(market: str, site: dict) -> dict:
+def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
     overview = site["overview"]
     news = [n for n in site["news"] if n.get("market") in (market, "GLOBAL")]
     news.sort(key=lambda n: n.get("importance", 0), reverse=True)
@@ -42,6 +42,9 @@ def build_brief(market: str, site: dict) -> dict:
         "market": market,
         "date": session_date.isoformat(),
         "generatedAt": iso(now_utc()),
+        # 발송 창을 놓쳐 개장 뒤에 나가는 브리핑. 텔레그램 렌더러가 경고 줄을
+        # 붙이고, 화면도 "장전"이라고 우기지 않게 하려고 파일에 남긴다.
+        "late": late,
         "headline": headline,
         "threeLines": three,
         "mood": {k: mood.get(k) for k in ("score", "label", "color")},

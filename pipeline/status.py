@@ -14,7 +14,7 @@ import subprocess
 from datetime import datetime, timedelta
 
 from .config import ROOT
-from .gate import brief_path, decide, local_now, next_send, window
+from .gate import brief_path, decide, late_cutoff, local_now, next_send, window
 from .util.dates import next_session_date
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
@@ -35,6 +35,7 @@ def _market_block(market: str) -> list[str]:
     session = next_session_date(market, now)
     path = brief_path(market, session)
     start, end = window(market)
+    cutoff = late_cutoff(market)
     # 같은 `now` 를 넘긴다 — 따로 읽으면 분 경계에서 표시 시각과 판정 근거가 어긋난다.
     run, reason = decide(market, now=now)
 
@@ -42,7 +43,8 @@ def _market_block(market: str) -> list[str]:
         f"[{market}]  세션 {session} ({WEEKDAY_KR[session.weekday()]})"
         f"  ·  현재 {now:%H:%M} {tz}",
         f"  브리핑 파일   {_file_line(path)}",
-        f"  발송 창       {start:%H:%M}~{end:%H:%M} {tz}",
+        # 지각 마감을 같이 보여준다 — 창이 지났다고 오늘 발송이 끝난 건 아니다.
+        f"  발송 창       {start:%H:%M}~{end:%H:%M} {tz} (지각 마감 {cutoff:%H:%M})",
         f"  게이트        {'발송' if run else '대기'} — {reason}",
     ]
 

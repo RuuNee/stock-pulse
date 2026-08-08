@@ -250,6 +250,8 @@ export interface Brief {
   market: Market;
   date: string;
   generatedAt: string;
+  /** 발송 창을 놓쳐 개장 뒤에 만들어진 브리핑. 예전 파일에는 이 필드가 없다. */
+  late?: boolean;
   headline: string;
   threeLines: string[];
   mood: Partial<Mood>;

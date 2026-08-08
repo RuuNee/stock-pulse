@@ -39,6 +39,7 @@ export default function Brief() {
         </div>
       )}
       {staleFor && <StaleNotice expected={staleFor} />}
+      {data?.late && <LateNotice />}
       {data && <BriefBody brief={data} />}
     </div>
   );
@@ -56,6 +57,23 @@ function StaleNotice({ expected }: { expected: string }) {
       ⏳ <b>{fmtDateKr(expected)} 브리핑은 아직 준비 중이에요.</b>
       <div className="mt-1" style={{ color: "var(--muted)" }}>
         아래는 그 전 장의 브리핑입니다. 장 시작 전에 자동으로 새로 만들어집니다.
+      </div>
+    </div>
+  );
+}
+
+/** 발송 창을 놓쳐 개장 뒤에 만들어진 브리핑. 화면 제목은 "장전 브리핑"이라
+ *  붙어 있으므로, 표시가 없으면 개장 전 시점의 이야기로 읽힌다. */
+function LateNotice() {
+  return (
+    <div
+      className="card p-3 text-sm leading-relaxed"
+      style={{ borderColor: "var(--warn, #b45309)", background: "var(--surface-2)" }}
+      role="status"
+    >
+      ⏰ <b>이 브리핑은 개장 뒤에 만들어졌어요.</b>
+      <div className="mt-1" style={{ color: "var(--muted)" }}>
+        스케줄러 지연으로 장 시작 전에 발송하지 못했습니다. 이미 장이 열린 상태로 읽어 주세요.
       </div>
     </div>
   );

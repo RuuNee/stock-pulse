@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.config import BRIEF_WINDOW
+from pipeline.config import BRIEF_LATE_CUTOFF, BRIEF_WINDOW
 
 WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
@@ -87,6 +87,37 @@ def test_slot_spacing_never_exceeds_window_width(workflow, market):
     slots = slots_utc(workflow)
     gaps = [b - a for a, b in zip(slots, slots[1:])]
     assert max(gaps) <= width, f"{workflow}: 슬롯 간격 {max(gaps)}분 > 발송 창 {width}분"
+
+
+# --------------------------------------------------------------------------
+# 슬롯 배치로는 못 막는 형태 — 2026-08-07 의 "한 덩어리 방출"
+# --------------------------------------------------------------------------
+# 위 테스트들은 전부 "지연이 슬롯마다 비슷하게 붙는다"를 가정한다. 그날 GitHub 은
+# 그러지 않았다. 240분에 걸쳐 예약된 슬롯 7개를 61분 안에 몰아서 깨웠고, 배치가
+# 접히면서 전부 창 뒤로 넘어갔다. 슬롯을 늘리는 대응이 왜 안 통하는지를 여기 박아
+# 둔다 — 이 케이스를 구하는 건 슬롯이 아니라 지각 마감이다.
+BURST_2026_08_07_KST = ["09:44", "09:50", "09:57", "10:03", "10:29", "10:38", "10:45"]
+
+
+def test_a_clustered_release_defeats_slot_spreading():
+    """실제 방출 시각 7개 중 발송 창 안에 떨어진 게 하나도 없다."""
+    start, end = _minutes(BRIEF_WINDOW["KR"][0]), _minutes(BRIEF_WINDOW["KR"][1])
+    woke = [_minutes(t) for t in BURST_2026_08_07_KST]
+    assert not [w for w in woke if start <= w <= end]
+
+
+def test_the_late_cutoff_rescues_that_release():
+    """같은 방출을 지각 마감이 받아낸다 — 안 그러면 그날 브리핑이 통째로 없다."""
+    start = _minutes(BRIEF_WINDOW["KR"][0])
+    cutoff = _minutes(BRIEF_LATE_CUTOFF["KR"])
+    woke = [_minutes(t) for t in BURST_2026_08_07_KST]
+    assert [w for w in woke if start <= w <= cutoff]
+
+
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_late_cutoff_sits_after_the_window(market):
+    """마감이 창보다 앞이면 지각 발송 경로가 영영 안 열린다."""
+    assert _minutes(BRIEF_LATE_CUTOFF[market]) > _minutes(BRIEF_WINDOW[market][1])
 
 
 @pytest.mark.parametrize("workflow,days", [("brief-kr.yml", "0-4"), ("brief-us.yml", "1-5")])

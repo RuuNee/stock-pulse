@@ -40,6 +40,11 @@ def render(brief: dict) -> str:
     L: list[str] = []
     L.append(f"<b>{label}</b>")
     L.append(f"{_e(brief['date'])}")
+    # 개장 뒤에 도착한 브리핑을 아무 표시 없이 보내면 "장전"이라는 제목이 거짓말이
+    # 된다. 늦었다는 사실을 맨 위에 박아 둔다 (config.BRIEF_LATE_CUTOFF).
+    if brief.get("late"):
+        L.append("\n⏰ <b>늦은 브리핑</b> — 스케줄러 지연으로 개장 뒤에 도착했습니다. "
+                 "이미 장이 열린 상태로 읽어 주세요.")
     if mood.get("label"):
         L.append(f"\n{dot} 오늘 시장 분위기: <b>{_e(mood['label'])}</b> ({mood.get('score', '?')}점)")
 

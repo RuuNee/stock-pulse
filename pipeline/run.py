@@ -79,7 +79,7 @@ def _cmd_brief(args) -> int:
                 log.warn(f"{market}: 데이터 없음 → 먼저 빌드합니다")
                 site = site_data.build((market,))
 
-        brief = brief_mod.build_brief(market, site)
+        brief = brief_mod.build_brief(market, site, late=args.late)
         brief_mod.write_brief(brief)
 
         message = telegram.render(brief)
@@ -102,12 +102,17 @@ def _cmd_brief(args) -> int:
 
 
 def _cmd_gate(args) -> int:
-    """워크플로가 부르는 판정기. stdout 에는 true/false 만, 이유는 stderr 로."""
-    from .gate import decide
+    """워크플로가 부르는 판정기.
 
-    run, reason = decide(args.market, force=args.force)
+    stdout 1행 = true/false, 2행 = 발송 모드(ontime|late|skip). 이유는 stderr 로.
+    워크플로가 2행을 보고 `brief --late` 를 붙일지 정한다.
+    """
+    from .gate import SKIP, send_mode
+
+    mode, reason = send_mode(args.market, force=args.force)
     print(reason, file=sys.stderr)
-    print("true" if run else "false")
+    print("true" if mode != SKIP else "false")
+    print(mode)
     return 0
 
 
@@ -177,6 +182,8 @@ def main(argv=None) -> int:
     p_brief.add_argument("--send", action="store_true", help="send to Telegram")
     p_brief.add_argument("--dry-run", action="store_true", help="print only (default)")
     p_brief.add_argument("--rebuild", action="store_true", help="rebuild data before briefing")
+    p_brief.add_argument("--late", action="store_true",
+                         help="발송 창을 놓친 실행 — '늦은 브리핑'으로 표시해서 보낸다")
     p_brief.set_defaults(func=_cmd_brief)
 
     p_gate = sub.add_parser("gate", help="print true/false — should this slot send the brief?")
