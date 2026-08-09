@@ -3,9 +3,14 @@ name: pulse
 # Light intraday refresh: macro indices (지수·환율·VIX·유가·금) + market mood +
 # news feed, so the homepage economic snapshot stays current between the
 # twice-daily full data-syncs. ~2 min/run. Skips the heavy per-ticker rebuild.
+# 주기: 2시간 → 1시간 (2026-08-09, 레포 public 전환으로 Actions 분 제한이 없어짐).
+# 30분으로 더 줄이지 않은 이유는 비용이 아니라 큐다 — 이 잡은 data-sync 와
+# `stock-pulse-data` 동시성 그룹을 공유하고 `cancel-in-progress: false` 라서,
+# 25분짜리 sync 뒤에 pulse 가 쌓이면 서로 밀어낸다. 스케줄러 지연(6~202분)이
+# 이미 주기보다 크므로 30분으로 줄여도 실제 신선도는 그만큼 안 좋아진다.
 on:
   schedule:
-    - cron: "0 */2 * * *"   # every 2 hours
+    - cron: "0 * * * *"   # 매시 정각
   workflow_dispatch:
 
 concurrency:

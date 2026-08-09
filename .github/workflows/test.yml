@@ -1,7 +1,13 @@
 name: test
 
-# 파이프라인·워크플로 스케줄을 건드린 푸시에서만 돈다. data/ 커밋은 하루에도
-# 수십 번 올라오므로 paths 로 걸러 Actions 사용 분을 아낀다.
+# 사람이 건드린 푸시에서만 돈다. `data/` 커밋은 봇이 하루 30번쯤 올리는데
+# 거기엔 검증할 게 없으므로 paths 로 걸러 Actions 목록을 깨끗하게 유지한다.
+#
+# 2026-08-09(public 전환) 에 범위를 넓혔다. 예전에는 분을 아끼려고 최소한만
+# 걸었는데, 그 바람에 두 구멍이 있었다:
+#   · `md파일/**` — tests/test_docs.py 가 문서와 config 의 드리프트를 잡는데,
+#     문서만 고친 커밋에서는 그 테스트가 아예 안 돌았다.
+#   · `web/**`   — 타입 오류를 CI 가 아니라 Vercel 빌드 실패로 알게 됐다.
 on:
   push:
     branches: [main]
@@ -9,9 +15,10 @@ on:
       - "pipeline/**"
       - "tests/**"
       - "requirements*.txt"
-      - ".github/workflows/brief-*.yml"
-      - ".github/workflows/test.yml"
+      - ".github/workflows/**"
       - ".github/scripts/**"
+      - "md파일/**"
+      - "web/**"
   pull_request:
   workflow_dispatch:
 
@@ -39,3 +46,20 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: bash -n .github/scripts/commit-data.sh
       - run: python -m pytest tests -q
+
+  # 웹은 파이썬 테스트가 전혀 안 건드린다. 예전에는 타입 오류가 Vercel 빌드
+  # 실패로만 드러나서, 사이트가 옛 배포에 멈춘 뒤에야 알았다.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - name: 타입 체크
+        run: npx tsc -b
+        working-directory: web
