@@ -13,7 +13,14 @@ from pathlib import Path
 
 from ..analyze import llm
 from ..analyze.technical import DISCLAIMER as _TA_DISCLAIMER
-from ..config import BRIEF_KEEP_DAYS, SITE_URL, TA_BRIEF_PICKS
+from ..config import (
+    BRIEF_KEEP_DAYS,
+    BRIEF_NEWS_TICKER_MIN,
+    BRIEF_NEWS_TOTAL,
+    BRIEF_OVERNIGHT_US,
+    SITE_URL,
+    TA_BRIEF_PICKS,
+)
 from ..util import io
 from ..util import text as T
 from ..util.dates import iso, next_session_date, now_utc
@@ -33,7 +40,8 @@ def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
     session_date = next_session_date(market)
     mood = overview["marketMood"].get(market, {})
     snapshot = _snapshot(market, overview["indices"])
-    top_news = [_top_news(n) for n in news[:6]]
+    top_news = [_top_news(n) for n in _pick_news(news)]
+    overnight = _overnight_us(market, site["news"])
     chart_signals = _chart_signals(market, site["tickers"])
     watchlist = _watchlist(market, overview["movers"], site["tickers"], site)
     headline, three = _summary(market, snapshot, top_news, mood, chart_signals)
@@ -50,6 +58,7 @@ def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
         "mood": {k: mood.get(k) for k in ("score", "label", "color")},
         "marketSnapshot": snapshot,
         "topNews": top_news,
+        "overnightUs": overnight,
         "chartSignals": chart_signals,
         "watchlistMoves": watchlist,
         "calendar": [],  # reserved; economic-calendar source is a future spec
@@ -103,6 +112,47 @@ def _snapshot(market: str, indices: list[dict]) -> list[dict]:
             out.append({"name": idx["name"], "value": idx["value"],
                         "changePct": idx["changePct"], "unit": idx["unit"]})
     return out
+
+
+def _pick_news(news: list[dict]) -> list[dict]:
+    """Top stories for the brief, with a floor reserved for single-stock news.
+
+    Straight importance ranking lets macro stories (Fed, FX, tariffs) take every
+    slot — they score high on outlet weight and market-moving keywords by
+    construction. Reserving `BRIEF_NEWS_TICKER_MIN` seats for items tagged to a
+    ticker keeps "why did my stock move" in the brief without demoting macro
+    below its own rank; the remaining seats stay pure importance order.
+
+    `news` must already be sorted by importance, descending.
+    """
+    ticker_items = [n for n in news if n.get("tickers")]
+    picks = ticker_items[:BRIEF_NEWS_TICKER_MIN]
+    chosen = {id(n) for n in picks}
+
+    for n in news:
+        if len(picks) >= BRIEF_NEWS_TOTAL:
+            break
+        if id(n) not in chosen:
+            picks.append(n)
+            chosen.add(id(n))
+
+    picks.sort(key=lambda n: n.get("importance", 0), reverse=True)
+    return picks[:BRIEF_NEWS_TOTAL]
+
+
+def _overnight_us(market: str, news: list[dict]) -> list[dict]:
+    """US single-stock news for the Korean brief — the "what happened overnight".
+
+    Only for the KR brief: the US session closes at 05:00 KST, hours before it
+    goes out, so these are stories the reader has not seen yet. Index-level moves
+    already show in `marketSnapshot`, so this block is restricted to items tagged
+    to a ticker — that is the part the snapshot cannot convey.
+    """
+    if market != "KR" or not BRIEF_OVERNIGHT_US:
+        return []
+    items = [n for n in news if n.get("market") == "US" and n.get("tickers")]
+    items.sort(key=lambda n: n.get("importance", 0), reverse=True)
+    return [_top_news(n) for n in items[:BRIEF_OVERNIGHT_US]]
 
 
 def _top_news(n: dict) -> dict:

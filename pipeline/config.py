@@ -206,6 +206,7 @@ US_UNIVERSE: list[tuple[str, str, str, list[str]]] = [
     ("INTU", "Intuit", "NASDAQ", ["인튜이트"]),
     ("AMGN", "Amgen", "NASDAQ", ["암젠"]),
     ("GILD", "Gilead", "NASDAQ", ["길리어드"]),
+    ("MRNA", "Moderna", "NASDAQ", ["모더나"]),
     ("NOW", "ServiceNow", "NYSE", ["서비스나우"]),
     ("ISRG", "Intuitive Surgical", "NASDAQ", ["인튜이티브서지컬"]),
     ("BKNG", "Booking Holdings", "NASDAQ", ["부킹홀딩스"]),
@@ -486,6 +487,33 @@ EVENT_NEWS_BACKFILL = True
 EVENT_BACKFILL_MAX_PER_TICKER = 6   # cap queries: 60 tickers × 6 × 1.2s ≈ 7min
 EVENT_BACKFILL_MAX_AGE_DAYS = 200   # don't backfill ancient events
 
+# --------------------------------------------------------------------------
+# 유니버스 계층 (tier)
+#
+# 위의 KR_UNIVERSE/US_UNIVERSE 가 **코어(tier 1)** 다. 한글 별칭이 붙어 있어
+# 한국어 기사까지 태깅되고, sync 마다 종목 뉴스를 새로 받는다.
+#
+# **확대분(tier 2)** 은 상장 목록에서 자동으로 채우는 대형주다. 코어를 손으로
+# 늘리는 방식은 "모더나가 급등한 다음에야 모더나를 추가하는" 사후 대응이라
+# 같은 사고가 종목만 바꿔서 반복된다. 감시 대상을 미리 넓혀 두는 게 목적.
+#
+# 다만 확대분까지 매번 종목 뉴스를 받으면 sync 시간이 종목 수에 선형으로
+# 붙는다. 조용한 종목의 RSS 는 대개 빈손이므로, 확대분은 **최근에 실제로
+# 움직인 날에만** 뉴스를 받는다. 코어는 조용해도 계속 받는다 — 안 그러면
+# "AAPL 이 -0.3% 인 날 신제품 발표를 놓치는" 회귀가 생긴다.
+UNIVERSE_TIER2 = True
+TIER2_US_SOURCE = "S&P500"    # FinanceDataReader StockListing 이름
+TIER2_US_MAX = 500
+TIER2_KR_MAX = 200            # KOSPI+KOSDAQ 시가총액 상위 N
+TIER2_NEWS_EVENT_DAYS = 3     # 최근 N일 안에 이벤트가 있으면 뉴스를 받는다
+TIER2_HISTORY_YEARS = 1       # 확대분은 차트 히스토리를 짧게 (레포 증식 억제)
+# 확대분 종목 파일이 커지면 매시간 커밋이 그대로 .git 증식으로 간다. 실측으로
+# KR 중소형주는 1년치만 봐도 EVENT_MAX_PER_TICKER(40) 상한을 그대로 채워서
+# 파일이 78KB 까지 갔다 — 코어(005930)의 113KB 에 육박한다. 확대분은 "왜 크게
+# 움직였나"만 답하면 되므로 굵은 이벤트 몇 개로 충분하다.
+TIER2_EVENT_MAX = 12
+TIER2_RECENT_NEWS = 5
+
 USER_AGENT = "Mozilla/5.0 (compatible; StockPulse/1.0; +https://github.com/RuuNee/stock-pulse)"
 HTTP_TIMEOUT = 15
 
@@ -554,6 +582,24 @@ NEWS_MAX_ITEMS = 400
 # 30일은 게이트가 필요로 하는 것(당일)보다 한참 넉넉하다. 이 여유는 사람을
 # 위한 것이다 — "어제 브리핑 뭐 나갔지" 를 파일로 확인할 수 있어야 하고,
 # 발송 사고가 나도 며칠 지나서 들여다볼 수 있어야 한다.
+# 브리핑 뉴스 선별 (build/brief.py)
+#
+# 자리가 6개뿐이라 순위가 곧 브리핑의 품질이다. 그런데 importance 는 언론사
+# 신뢰도(30)와 마켓무빙 키워드(20)에 크게 기울어 있어서, FOMC·환율 같은 매크로
+# 기사가 상위를 통째로 먹고 개별 종목이 한 칸도 못 들어가는 날이 나온다.
+# 2026-08-19 미장이 그랬다 — 모더나 흑색종 임상 성공 기사가 69점으로 7위,
+# 6위(70점)에 1점 차로 밀려 브리핑에서 잘렸다. 그래서 종목 몫을 따로 떼어 둔다.
+BRIEF_NEWS_TOTAL = 6
+BRIEF_NEWS_TICKER_MIN = 2   # 개별 종목 기사에 보장하는 최소 자리
+
+# 국장 브리핑에 붙이는 "밤사이 미국" 블록.
+#
+# 미장은 05:00 KST 에 닫히고 국장 브리핑은 07:45~08:40 에 나간다. 한국 투자자에게
+# 밤사이 미국 뉴스는 아침에 처음 보는 정보인데, 브리핑은 시장 필터
+# (`market in (market, "GLOBAL")`) 때문에 US 종목 기사를 통째로 버리고 지수만
+# 보여주고 있었다. 섹터 파급·보유 종목 판단에 필요한 부분이라 따로 싣는다.
+BRIEF_OVERNIGHT_US = 3      # 0 이면 블록을 끈다
+
 BRIEF_KEEP_DAYS = 30
 TICKER_NEWS_DAYS = 400     # per-ticker news retained for event matching
 RECENT_NEWS_PER_TICKER = 10
@@ -662,5 +708,6 @@ def all_universe() -> list[dict]:
                 "aliases": aliases,
                 "currency": "KRW" if market == "KR" else "USD",
                 "isEtf": is_etf,
+                "tier": 1,
             })
     return out

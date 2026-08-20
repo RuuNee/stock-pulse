@@ -21,6 +21,10 @@ from ..config import (
     EVENT_NEWS_BACKFILL,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
+    HISTORY_YEARS,
+    TIER2_EVENT_MAX,
+    TIER2_HISTORY_YEARS,
+    TIER2_RECENT_NEWS,
     TRANSLATE_FEED_TOP,
     TRANSLATE_FOREIGN,
     TRANSLATE_MAX_ITEMS,
@@ -288,7 +292,11 @@ def _no_backslide(meta: dict, df):
 
 
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
-    df = prices.fetch_ohlcv(meta["code"])
+    # 확대분(tier 2)은 히스토리를 짧게 받는다. 종목 파일 하나가 90KB 인데
+    # 수백 개가 매시간 커밋되면 .git 이 하루 수십 MB 씩 불어난다.
+    is_tier2 = meta.get("tier", 1) == 2
+    years = TIER2_HISTORY_YEARS if is_tier2 else HISTORY_YEARS
+    df = prices.fetch_ohlcv(meta["code"], years=years)
     # 정기 실행(07:30·21:30 UTC)은 양 시장이 다 닫힌 시각이라 안 걸리지만,
     # 수동 dispatch 는 장중에 돌 수 있다. 그때 진행 중인 봉이 종가로 들어가면
     # 차트 분석 신호까지 그 값으로 계산된다.
@@ -300,20 +308,28 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     quote = prices.quote_from(df)
     quote["marcap"] = meta.get("marcap")
 
-    events = events_mod.detect(df, meta["code"])
+    events = events_mod.detect(df, meta["code"],
+                               limit=TIER2_EVENT_MAX if is_tier2 else None)
 
     # ETFs are baskets: single-company news doesn't explain their moves, so skip
-    # the expensive per-ticker Google News fetch + historical backfill. They keep
+    # the expensive per-ticker fetch + historical backfill. They keep
     # price/chart/search; any market news tagged to them still shows.
+    #
+    # Tier 2 is gated the same way but on movement instead of type — see
+    # `universe.wants_news`. Both still pick up market-feed news tagged to them,
+    # so a quiet tier-2 name is never fully dark.
     is_etf = meta.get("isEtf", False)
     tagged_market = [n for n in market_news
                      if any(t["code"] == meta["code"] for t in n.get("tickers", []))]
-    ticker_news = [] if is_etf else news_mod.fetch_ticker_news(meta)
+    fetch_news = universe.wants_news(meta, events)
+    ticker_news = news_mod.fetch_ticker_news(meta) if fetch_news else []
     combined = news_mod.dedupe(ticker_news + tagged_market)
     combined = score.enrich(combined)
 
     events = link.attach_news(events, combined, meta["market"])
-    if not is_etf:
+    # 과거 이벤트 백필은 종목당 최대 6번의 date-scoped 쿼리(각 1.2초 sleep)라
+    # 종목당 7초까지 든다. 코어에만 돌린다 — 확대분까지 켜면 sync 가 몇 시간이 된다.
+    if not is_etf and not is_tier2:
         _backfill_event_news(meta, events)
     events = summarize.summarize_events(meta, events)
 
@@ -325,6 +341,7 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
         "exchange": meta.get("exchange"),
         "sector": meta.get("sector"),
         "currency": meta["currency"],
+        "tier": 2 if is_tier2 else 1,
         "updatedAt": iso(now_utc()),
         "quote": quote,
         "ohlcv": {
@@ -335,7 +352,8 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
         # 차트 분석은 순수 계산이라 LLM 예산도 네트워크도 쓰지 않는다.
         "analysis": technical.analyze(df),
         "events": events,
-        "recentNews": [_news_brief(n) for n in combined[:RECENT_NEWS_PER_TICKER]],
+        "recentNews": [_news_brief(n) for n in
+                       combined[:TIER2_RECENT_NEWS if is_tier2 else RECENT_NEWS_PER_TICKER]],
         "_spark": prices.spark(df, 30),
     }
 
@@ -392,6 +410,7 @@ def _index_entry(detail: dict) -> dict:
         "exchange": detail.get("exchange"),
         "sector": detail.get("sector"),
         "currency": detail["currency"],
+        "tier": detail.get("tier", 1),
         "close": q.get("close"),
         "changePct": q.get("changePct"),
         "marcap": q.get("marcap"),
