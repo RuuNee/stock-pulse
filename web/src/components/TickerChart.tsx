@@ -14,6 +14,7 @@ import {
 import type { ChartEvent, TickerDetail } from "../lib/types";
 import { useSettings } from "../lib/settings";
 import { INDICATOR, type IndicatorStyle } from "../lib/signals";
+import { computeIndicators } from "../lib/indicators";
 import { fmtPrice, fmtVolume } from "../lib/format";
 import ChangeBadge from "./ChangeBadge";
 import Legend from "./LineSwatch";
@@ -105,7 +106,9 @@ export default function TickerChart({ detail, range, overlays, onEventNews }: Pr
     const rows = detail.ohlcv.rows;
     const startIdx = Math.max(0, rows.length - range);
     const slice = rows.slice(startIdx);
-    const ind = detail.indicators ?? {};
+    // 지표는 서버가 안 보낸다 — OHLCV 에서 그 자리에서 만든다.
+    // 수식은 pipeline/analyze/technical.py 와 맞춰져 있다 (lib/indicators.ts 주석 참고).
+    const ind = computeIndicators(rows);
 
     /** 지표 배열(전체 길이)을 현재 구간에 맞춰 잘라 라인 데이터로. */
     const lineData = (key: string) =>

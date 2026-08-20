@@ -1,7 +1,7 @@
 """Orchestrate collection + analysis into the static JSON the web app reads.
 
 Pipeline per run:
-  universe metadata → per-ticker (prices, indicators, events, news) →
+  universe metadata → per-ticker (prices, events, news) →
   ticker files + index + market overview + news feed + manifest.
 
 Everything is written under data/ (schema in md파일/02-데이터스키마.md).
@@ -13,7 +13,7 @@ from ..collect import macro as macro_mod
 from ..collect import news as news_mod
 from ..collect import prices, universe
 from ..analyze import events as events_mod
-from ..analyze import indicators, link, llm, mood, score, summarize, technical
+from ..analyze import link, llm, mood, score, summarize, technical
 from ..config import (
     DATA_DIR,
     EVENT_BACKFILL_MAX_AGE_DAYS,
@@ -348,7 +348,11 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
             "columns": ["d", "o", "h", "l", "c", "v"],
             "rows": prices.to_rows(df),
         },
-        "indicators": indicators.compute(df),
+        # 차트 지표(ma·rsi·볼린저·macd)는 싣지 않는다. 전부 위 OHLCV 에서
+        # 파생되는 값인데 11개 시계열이 종목 파일의 절반을 차지했고(코어 91KB 중
+        # 42KB), 895종목이 sync 마다 다시 커밋되니 그대로 .git 증식이 됐다.
+        # 웹이 `lib/indicators.ts` 에서 같은 수식으로 계산한다 —
+        # 두 구현의 일치는 tests/test_indicators_parity.py 가 고정한다.
         # 차트 분석은 순수 계산이라 LLM 예산도 네트워크도 쓰지 않는다.
         "analysis": technical.analyze(df),
         "events": events,

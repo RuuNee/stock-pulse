@@ -8,7 +8,8 @@
     "dev": "vite",
     "prebuild": "npm run copy-data",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check-indicators": "node scripts/check-indicators.mjs"
   },
   "dependencies": {
     "lightweight-charts": "^5.0.7",

@@ -225,7 +225,9 @@ export interface TickerDetail {
   updatedAt: string;
   quote: Quote;
   ohlcv: { columns: string[]; rows: (string | number)[][] };
-  indicators: Record<string, (number | null)[]>;
+  // 차트 지표는 더 이상 서버가 보내지 않는다 — OHLCV 에서 파생되는 값이라
+  // 브라우저에서 계산한다 (`lib/indicators.ts`). 파일 크기 문제였다.
+  tier?: 1 | 2;
   analysis?: TickerAnalysis | null;
   events: ChartEvent[];
   recentNews: NewsItem[];
