@@ -70,15 +70,19 @@ if ($branch -ne 'main') {
 
 # --- 잘라낼 지점 찾기 ------------------------------------------------------
 $cutoff = (Get-Date).AddDays(-$KeepDays).ToString('yyyy-MM-dd')
-$cut = (Git rev-list -1 --before="$cutoff" HEAD).Trim()
+# 저장소가 KeepDays 보다 어리면 rev-list 가 빈 값을 준다. 파이프 결과가 $null 일
+# 때 .Trim() 을 부르면 터지므로 문자열로 먼저 받는다.
+$cut = "$(Git rev-list -1 --before=$cutoff HEAD)".Trim()
 if (-not $cut) {
+  $first = "$(Git log --reverse --format=%ci -1)".Trim()
   Show "$cutoff 이전 커밋이 없습니다 — 접을 게 없습니다." Yellow
+  Show "   첫 커밋: $first · -KeepDays 를 줄여 보세요." DarkGray
   exit 0
 }
 
-$before = [int](Git count-objects -v | Select-String 'size-pack: (\d+)').Matches.Groups[1].Value
-$foldCount = [int](Git rev-list --count $cut).Trim()
-$keepCount = [int](Git rev-list --count "$cut..HEAD").Trim()
+$before = [int]((Git count-objects -v | Select-String 'size-pack: (\d+)').Matches[0].Groups[1].Value)
+$foldCount = [int]"$(Git rev-list --count $cut)".Trim()
+$keepCount = [int]"$(Git rev-list --count "$cut..HEAD")".Trim()
 
 Show ''
 Show "기준 시점 : $cutoff (최근 $KeepDays 일 유지)" Cyan
