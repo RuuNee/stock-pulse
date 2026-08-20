@@ -50,28 +50,32 @@ def tag_tickers(items: list[dict], universe: list[dict]) -> list[dict]:
     return items
 
 
-def _needles(ticker: dict) -> list[tuple[str, float]]:
-    """Search terms with confidence weights."""
-    out: list[tuple[str, float]] = [(ticker["name"], 0.85)]
+def _needles(ticker: dict) -> list[tuple[str, float, bool]]:
+    """Search terms with confidence weights and case-sensitivity.
+
+    The third field is ``case_sensitive``. Only US ticker symbols set it: they
+    collide with ordinary lowercase words, and headlines always capitalise them.
+    """
+    out: list[tuple[str, float, bool]] = [(ticker["name"], 0.85, False)]
     for alias in ticker.get("aliases", []):
-        out.append((alias, 0.75))
+        out.append((alias, 0.75, False))
     if ticker["market"] == "US":
-        out.append((ticker["code"], 0.9))
+        out.append((ticker["code"], 0.9, True))
         if ticker.get("nameEn"):
-            out.append((ticker["nameEn"], 0.85))
+            out.append((ticker["nameEn"], 0.85, False))
     else:
-        out.append((ticker["code"], 0.95))  # 6-digit codes are unambiguous
+        out.append((ticker["code"], 0.95, False))  # 6-digit codes are unambiguous
     return out
 
 
 def _match_score(haystack: str, entry: dict, title: str) -> float:
     best = 0.0
-    for needle, weight in entry["needles"]:
+    for needle, weight, cased in entry["needles"]:
         if len(needle) < 2:
             continue
-        if T.contains_token(haystack, needle):
+        if T.contains_token(haystack, needle, case_sensitive=cased):
             score = weight
-            if T.contains_token(title, needle):
+            if T.contains_token(title, needle, case_sensitive=cased):
                 score = min(1.0, score + 0.1)  # headline mention is stronger
             best = max(best, score)
     return round(best, 2)

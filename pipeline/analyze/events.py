@@ -22,7 +22,7 @@ from ..config import (
 )
 
 
-def detect(df: pd.DataFrame, code: str) -> list[dict]:
+def detect(df: pd.DataFrame, code: str, *, limit: int | None = None) -> list[dict]:
     if df is None or len(df) < 30:
         return []
 
@@ -67,7 +67,7 @@ def detect(df: pd.DataFrame, code: str) -> list[dict]:
         })
 
     events.sort(key=lambda e: e["date"], reverse=True)
-    return events[:EVENT_MAX_PER_TICKER]
+    return events[:limit or EVENT_MAX_PER_TICKER]
 
 
 def _classify(ret: float, z: float, vol_ratio: float, gap: float) -> str | None:

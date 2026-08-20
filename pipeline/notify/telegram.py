@@ -80,6 +80,20 @@ def render(brief: dict) -> str:
             if meta:
                 L.append(f"   🏷 {meta}")
 
+    # 국장 브리핑 전용. 미장은 05:00 KST 에 닫혀서 이 기사들은 독자가 아직 못 본
+    # 것들이다 — 간밤 시장 스냅샷이 지수만 보여주는 자리를 종목 단위로 메운다.
+    overnight = brief.get("overnightUs", [])
+    if overnight:
+        L.append("\n━━━━━━━━━━━━━━")
+        L.append("<b>🌏 밤사이 미국 — 종목</b>")
+        for n in overnight:
+            title = _e(n.get("titleKo") or n["title"])
+            link = f'<a href="{_e(n["url"])}">{title}</a>' if n.get("url") else title
+            tks = " · ".join(_e(t["name"]) for t in n.get("tickers", []))
+            L.append(f"\n• {link}")
+            if tks:
+                L.append(f"   🏷 {tks}")
+
     chart = brief.get("chartSignals") or {}
     counts = chart.get("counts") or {}
     if counts.get("bullish") or counts.get("bearish"):
