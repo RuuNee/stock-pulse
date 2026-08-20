@@ -74,7 +74,9 @@ $cutoff = (Get-Date).AddDays(-$KeepDays).ToString('yyyy-MM-dd')
 # 때 .Trim() 을 부르면 터지므로 문자열로 먼저 받는다.
 $cut = "$(Git rev-list -1 --before=$cutoff HEAD)".Trim()
 if (-not $cut) {
-  $first = "$(Git log --reverse --format=%ci -1)".Trim()
+  # `log --reverse -1` 은 -1 이 먼저 걸려서 최신 커밋을 준다. 루트를 직접 찾는다.
+  $root = "$(Git rev-list --max-parents=0 HEAD)".Trim()
+  $first = "$(Git show -s --format=%ci $root)".Trim()
   Show "$cutoff 이전 커밋이 없습니다 — 접을 게 없습니다." Yellow
   Show "   첫 커밋: $first · -KeepDays 를 줄여 보세요." DarkGray
   exit 0

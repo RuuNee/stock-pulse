@@ -56,6 +56,18 @@ def render(brief: dict) -> str:
     for i, line in enumerate(brief.get("threeLines", []), 1):
         L.append(f"{i}. {_e(line)}")
 
+    # 브리핑에서 유일하게 앞을 보는 블록이라 위쪽에 둔다. 나머지는 전부 이미
+    # 일어난 일을 설명한다.
+    cal = brief.get("calendar", [])
+    if cal:
+        L.append("\n━━━━━━━━━━━━━━")
+        L.append("<b>📅 오늘 예정</b>")
+        for c in cal:
+            star = "⭐ " if c.get("importance") == "high" else ""
+            eps = f" · EPS 전망 {_e(c['epsForecast'])}" if c.get("epsForecast") else ""
+            L.append(f"{star}{_e(c['title'])}")
+            L.append(f"   🕐 {_e(c.get('time', '시간 미정'))}{eps}")
+
     snap = brief.get("marketSnapshot", [])
     if snap:
         L.append("\n━━━━━━━━━━━━━━")

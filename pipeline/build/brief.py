@@ -13,15 +13,18 @@ from pathlib import Path
 
 from ..analyze import llm
 from ..analyze.technical import DISCLAIMER as _TA_DISCLAIMER
+from ..collect import calendar as calendar_mod
 from ..config import (
     BRIEF_KEEP_DAYS,
+    CALENDAR_EARNINGS,
+    CALENDAR_MAX_ITEMS,
     BRIEF_NEWS_TICKER_MIN,
     BRIEF_NEWS_TOTAL,
     BRIEF_OVERNIGHT_US,
     SITE_URL,
     TA_BRIEF_PICKS,
 )
-from ..util import io
+from ..util import io, log
 from ..util import text as T
 from ..util.dates import iso, next_session_date, now_utc
 from ..config import DATA_DIR
@@ -61,7 +64,7 @@ def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
         "overnightUs": overnight,
         "chartSignals": chart_signals,
         "watchlistMoves": watchlist,
-        "calendar": [],  # reserved; economic-calendar source is a future spec
+        "calendar": _calendar(market, session_date),
         "disclaimer": _DISCLAIMER,
         "siteUrl": SITE_URL,
     }
@@ -153,6 +156,37 @@ def _overnight_us(market: str, news: list[dict]) -> list[dict]:
     items = [n for n in news if n.get("market") == "US" and n.get("tickers")]
     items.sort(key=lambda n: n.get("importance", 0), reverse=True)
     return [_top_news(n) for n in items[:BRIEF_OVERNIGHT_US]]
+
+
+def _calendar(market: str, session_date) -> list[dict]:
+    """오늘 예정된 재료 — 지금으로선 미국 실적 발표.
+
+    브리핑에서 유일하게 **선행하는** 항목이다. 나머지는 전부 이미 일어난 일을
+    설명한다. 급등을 맞힐 수는 없어도 "오늘 밤 이 종목이 실적을 낸다"는 미리
+    말해 줄 수 있고, 그게 대비의 최소 단위다.
+
+    국장 브리핑(07:45~08:40 KST)에는 **그날 밤 열리는 미국장** 일정을 싣는다.
+    한국 아침 기준으로 아직 안 일어난 일이라 진짜 예고가 된다. 미장 브리핑은
+    개장 직전이라 같은 날짜를 그대로 쓴다.
+    """
+    if not CALENDAR_EARNINGS:
+        return []
+    try:
+        items = calendar_mod.fetch_earnings(session_date)
+    except Exception as exc:      # 캘린더가 죽어도 브리핑은 나가야 한다
+        log.warn(f"calendar skipped: {exc}")
+        return []
+
+    same_day = [i for i in items if i["date"] == session_date.isoformat()]
+    picked = (same_day or items)[:CALENDAR_MAX_ITEMS]
+    return [{
+        "time": i["when"],
+        "title": f"{i['name']} ({i['code']}) 실적 발표",
+        "code": i["code"],
+        "market": i["market"],
+        "epsForecast": i["epsForecast"],
+        "importance": "high" if (i["marcap"] or 0) >= 100_000_000_000 else "normal",
+    } for i in picked]
 
 
 def _top_news(n: dict) -> dict:

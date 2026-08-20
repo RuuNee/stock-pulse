@@ -65,6 +65,19 @@ def run() -> int:
     us_probe = news.fetch_ticker_news({"code": "AAPL", "name": "Apple", "market": "US"})
     log.ok(f"Google News(국장) {len(kr_probe)}건 / Yahoo(미장) {len(us_probe)}건")
 
+    log.step("실적 캘린더")
+    from .collect import calendar as calendar_mod
+    try:
+        entries = calendar_mod.fetch_earnings()
+        if entries:
+            log.ok(f"Nasdaq 실적 일정: {len(entries)}건 (예: {entries[0]['code']} {entries[0]['date']})")
+        else:
+            # 실적 시즌 밖이면 며칠씩 빈 날이 정상이라 실패로 세지 않는다.
+            log.warn("Nasdaq 실적 일정: 0건 — 비수기면 정상, 며칠째면 소스 확인")
+    except Exception as exc:
+        log.err(f"Nasdaq 실적 일정: 실패 {exc}")
+        failures += 1
+
     log.step("휴장일 표")
     from .util.dates import HOLIDAYS, holiday_coverage_gap
     for market in ("KR", "US"):
