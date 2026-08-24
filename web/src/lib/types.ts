@@ -276,7 +276,23 @@ export interface Brief {
     signal?: string | null;
     signalEmoji?: string | null;
   }[];
-  calendar: { time: string; title: string; importance: string }[];
+  /** 밤사이 미국 종목 뉴스 (국장 브리핑 전용). 예전 파일에는 이 필드가 없다. */
+  overnightUs?: {
+    title: string;
+    titleKo?: string;
+    url: string;
+    source?: string;
+    tickers: { code: string; name: string }[];
+  }[];
+  /** 오늘 예정된 재료 — 지금으로선 미국 실적 발표. 브리핑에서 유일하게 앞을 보는 블록. */
+  calendar?: {
+    time: string;
+    title: string;
+    code?: string;
+    market?: Market;
+    epsForecast?: string | null;
+    importance: string;
+  }[];
   disclaimer: string;
   siteUrl?: string;
 }

@@ -103,6 +103,8 @@ function BriefBody({ brief }: { brief: BriefT }) {
         </ol>
       </section>
 
+      {(brief.calendar?.length ?? 0) > 0 && <CalendarSection items={brief.calendar!} />}
+
       {brief.marketSnapshot.length > 0 && (
         <section className="card p-4">
           <h2 className="font-bold mb-2">📊 간밤 시장</h2>
@@ -139,6 +141,8 @@ function BriefBody({ brief }: { brief: BriefT }) {
         </section>
       )}
 
+      {(brief.overnightUs?.length ?? 0) > 0 && <OvernightSection items={brief.overnightUs!} />}
+
       {brief.chartSignals && <ChartSignalSection cs={brief.chartSignals} />}
 
       {brief.watchlistMoves.length > 0 && (
@@ -163,6 +167,54 @@ function BriefBody({ brief }: { brief: BriefT }) {
 
       <p className="text-xs text-center" style={{ color: "var(--muted)" }}>ℹ️ {brief.disclaimer}</p>
     </div>
+  );
+}
+
+/** 📅 오늘 예정 — 브리핑에서 유일하게 앞을 보는 블록이라 위쪽에 둔다.
+ *  나머지 카드는 전부 이미 일어난 일을 설명한다. 텔레그램 렌더러와 같은 자리. */
+function CalendarSection({ items }: { items: NonNullable<BriefT["calendar"]> }) {
+  return (
+    <section className="card p-4">
+      <h2 className="font-bold mb-2">📅 오늘 예정</h2>
+      <div className="flex flex-col gap-2">
+        {items.map((c, i) => (
+          <div key={c.code ?? i} className="flex items-start justify-between gap-2 text-sm">
+            <span className="min-w-0">
+              {c.importance === "high" && <span title="시가총액 상위">⭐ </span>}
+              <span className="font-semibold">{c.title}</span>
+              {c.epsForecast && (
+                <span style={{ color: "var(--muted)" }}> · EPS 전망 {c.epsForecast}</span>
+              )}
+            </span>
+            <span className="shrink-0 text-xs whitespace-nowrap" style={{ color: "var(--muted)" }}>
+              🕐 {c.time || "시간 미정"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 🌏 밤사이 미국 — 국장 브리핑 전용. 미장은 05:00 KST 에 닫혀서 독자가 아직 못 본
+ *  기사들이다. 지수만 보여주는 "간밤 시장"이 못 채우는 자리를 종목 단위로 메운다. */
+function OvernightSection({ items }: { items: NonNullable<BriefT["overnightUs"]> }) {
+  return (
+    <section className="card p-4">
+      <h2 className="font-bold mb-3">🌏 밤사이 미국 — 종목</h2>
+      <div className="flex flex-col gap-3">
+        {items.map((n, i) => (
+          <div key={i}>
+            <a href={n.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-sm hover:underline">
+              {n.titleKo || n.title}
+            </a>
+            <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+              {n.tickers.map((t) => t.name).join(" · ")} {n.source && `· ${n.source}`}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
