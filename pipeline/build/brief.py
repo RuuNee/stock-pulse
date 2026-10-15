@@ -2,52 +2,109 @@
 
 Turns the freshly built site data into a single brief object per market. The
 same object powers both the web brief card and the Telegram message, so the
-two can never drift. The 3-line summary is LLM-written when a key is available,
-rule-composed otherwise.
+two can never drift.
+
+2026-10-15 개편 — 사용자 신고 여섯 가지가 출발점이다 (99-스펙변경이력).
+
+* "오늘 꼭 알아야 할 3가지"가 매일 같았다. 3줄 중 2줄이 틀로 고정돼 있었다 —
+  간밤 지수 등락(바로 아래 지표 칸과 같은 내용)과 "차트 지표 기준 매수 우위 N개".
+* 코스피 -7.6% 날 아침 브리핑이 "중립 47점"이었다. 점수식이 전날 코스피만 보고
+  밤사이 미국 반도체·한국 ETF 급락을 안 봤다 → `mood.outlook`.
+* 왜 움직였는지 설명이 없었다. 3줄 요약에 헤드라인 6개만 넘겼으니 쓸 재료가
+  없었다 → 지표·수급·시황 기사·후보 기사를 다 넘기고 해설 4단락을 받는다.
+* 주요 뉴스가 같은 사건 3건이었고 "💡" 한 줄은 키워드 규칙이라 엉뚱했다
+  ("양자역학의 세계" → "금리가 오르면…") → `analyze/curate.py` + LLM 이 고르고 쓴다.
+
+LLM 이 없거나 실패해도 브리핑은 나간다 — 규칙 요약 + 규칙 선별로.
 """
 
 from __future__ import annotations
 
-from datetime import date, timedelta
-from pathlib import Path
+import math
+from datetime import date, datetime, timedelta
 
-from ..analyze import llm
+from ..analyze import curate, llm, mood
 from ..analyze.technical import DISCLAIMER as _TA_DISCLAIMER
 from ..collect import calendar as calendar_mod
+from ..collect import flows as flows_mod
+from ..collect import news as news_mod
+from ..collect import prices
 from ..config import (
     BRIEF_KEEP_DAYS,
-    CALENDAR_EARNINGS,
-    CALENDAR_MAX_ITEMS,
+    BRIEF_KR_LEADERS,
+    BRIEF_NEWS_FALLBACK_HOURS,
     BRIEF_NEWS_TICKER_MIN,
     BRIEF_NEWS_TOTAL,
-    BRIEF_OVERNIGHT_US,
+    CALENDAR_EARNINGS,
+    CALENDAR_MAX_ITEMS,
+    DATA_DIR,
+    KR_LINKED_US,
+    KST,
+    ET,
     SITE_URL,
     TA_BRIEF_PICKS,
+    US_BELLWETHERS,
+    WRAP_BIG_MOVE_PCT,
+    WRAP_PER_QUERY,
+    WRAP_QUERIES,
+    WRAP_WHY_QUERIES,
 )
 from ..util import io, log
 from ..util import text as T
-from ..util.dates import iso, next_session_date, now_utc
-from ..config import DATA_DIR
+from ..util.dates import WEEKDAY_KR, iso, next_session_date, now_utc, parse_iso, session_closed
 
 _DISCLAIMER = "본 브리핑은 공개된 뉴스를 정리한 정보이며 투자 권유가 아닙니다."
 
 _BULLISH = ("strongBuy", "buy")
 _BEARISH = ("strongSell", "sell")
 
+# 시장별 지표 칸. 국장 브리핑은 전날 국장 마감 + 밤사이 미국, 미장 브리핑은 전날
+# 미장 마감 + 오늘 아시아. 예전 국장 브리핑에는 코스피가 아예 없었다.
+_SNAPSHOT_KEYS = {
+    "KR": ["KS11", "KQ11", "US500", "IXIC", "^SOX", "USD/KRW", "^TNX", "VIX"],
+    "US": ["US500", "IXIC", "DJI", "^SOX", "VIX", "^TNX", "CL=F", "KS11"],
+}
+_FUTURES = (("ES=F", "S&P 500 선물"), ("NQ=F", "나스닥 100 선물"))
+
+_SECTIONS = {
+    "KR": ("어제 국장", "간밤 미국", "흐름 읽기", "앞으로 볼 것"),
+    "US": ("어제 미장", "밤사이 세계", "흐름 읽기", "앞으로 볼 것"),
+}
+
 
 def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
     overview = site["overview"]
-    news = [n for n in site["news"] if n.get("market") in (market, "GLOBAL")]
-    news.sort(key=lambda n: n.get("importance", 0), reverse=True)
-
+    indices = overview["indices"]
     session_date = next_session_date(market)
-    mood = overview["marketMood"].get(market, {})
-    snapshot = _snapshot(market, overview["indices"])
-    top_news = [_top_news(n) for n in _pick_news(news)]
-    overnight = _overnight_us(market, site["news"])
+    prev = previous_brief(market, session_date)
+
+    futures = _futures() if market == "US" else {}
+    breadth = (overview.get("breadth") or {}).get(market)
+    outlook = mood.outlook(market, indices, futures=futures, breadth=breadth)
+    snapshot = _snapshot(market, indices, futures)
+    flows = flows_mod.fetch_kr_flows() if market == "KR" else None
+
+    since = news_since(prev)
+    sent = {n.get("url") for n in (prev or {}).get("topNews", []) if n.get("url")}
+    cands = curate.candidates(site["news"], market, since=since, exclude_urls=sent)
+    wrap = _market_wrap(market, indices, since)
     chart_signals = _chart_signals(market, site["tickers"])
     watchlist = _watchlist(market, overview["movers"], site["tickers"], site)
-    headline, three = _summary(market, snapshot, top_news, mood, chart_signals)
+    calendar = _calendar(market, session_date, site["tickers"])
+
+    ctx = {
+        "market": market, "session": session_date, "outlook": outlook,
+        "indices": indices, "futures": futures, "flows": flows,
+        "leaders": _leaders(market, site["tickers"]), "movers": watchlist,
+        "wrap": wrap, "candidates": cands, "calendar": calendar, "prev": prev,
+    }
+    commentary = _commentary(ctx)
+    if commentary:
+        headline, three, analysis, picks = commentary
+    else:
+        headline, three = _rule_summary(ctx)
+        analysis = None
+        picks = [(n, None, None) for n in _pick_news(cands, key="briefScore")]
 
     return {
         "market": market,
@@ -58,13 +115,17 @@ def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
         "late": late,
         "headline": headline,
         "threeLines": three,
-        "mood": {k: mood.get(k) for k in ("score", "label", "color")},
+        "mood": {k: outlook.get(k) for k in ("score", "label", "color", "kind", "reason")},
+        "analysis": analysis,
         "marketSnapshot": snapshot,
-        "topNews": top_news,
-        "overnightUs": overnight,
+        "flows": flows,
+        "topNews": [_top_news(n, why=why, title_ko=ko) for n, why, ko in picks],
+        # 해설이 없을 때(LLM 실패) 원인을 대신 짚어 주는 시황 기사 제목들.
+        "wrapHeadlines": [{"title": w["title"], "url": w["url"], "source": w.get("source")}
+                          for w in wrap[:5]],
         "chartSignals": chart_signals,
         "watchlistMoves": watchlist,
-        "calendar": _calendar(market, session_date),
+        "calendar": calendar,
         "disclaimer": _DISCLAIMER,
         "siteUrl": SITE_URL,
     }
@@ -77,8 +138,7 @@ def write_brief(brief: dict) -> None:
     prune_briefs(market)
 
 
-def prune_briefs(market: str, *, data_dir: Path | None = None,
-                 today: date | None = None) -> list[Path]:
+def prune_briefs(market: str, *, data_dir=None, today: date | None = None) -> list:
     """오래된 날짜별 브리핑 파일을 지운다. 지운 경로를 돌려준다.
 
     파일 하나하나는 작지만 시장당 하루 1개씩 무한히 쌓인다. 화면은 이 파일을
@@ -104,20 +164,377 @@ def prune_briefs(market: str, *, data_dir: Path | None = None,
     return removed
 
 
+def previous_brief(market: str, session_date: date, *, data_dir=None) -> dict | None:
+    """이번 세션 직전에 나간 브리핑. 같은 날 다시 만드는 경우(리허설)는 건너뛴다."""
+    root = (data_dir or DATA_DIR) / "brief"
+    for path in sorted(root.glob(f"????-??-??-{market}.json"), reverse=True):
+        if path.name[:10] < session_date.isoformat():
+            return io.read_json(path)
+    return None
+
+
+def news_since(prev: dict | None, now: datetime | None = None) -> datetime:
+    """뉴스 창의 시작 — 직전 브리핑 2시간 전부터. 직전 브리핑이 없으면 고정 시간."""
+    now = now or now_utc()
+    started = parse_iso((prev or {}).get("generatedAt"))
+    if started is None or started > now:
+        return now - timedelta(hours=BRIEF_NEWS_FALLBACK_HOURS)
+    # 연휴 뒤 첫 브리핑이라도 피드 보관 기간(3일)보다 길게 볼 이유는 없다.
+    return max(started - timedelta(hours=2), now - timedelta(days=4))
+
+
 # --------------------------------------------------------------------------
-def _snapshot(market: str, indices: list[dict]) -> list[dict]:
-    keys = (["US500", "IXIC", "USD/KRW", "^TNX"] if market == "KR"
-            else ["US500", "IXIC", "VIX", "CL=F"])
+# 지표
+# --------------------------------------------------------------------------
+def _snapshot(market: str, indices: list[dict], futures: dict | None = None) -> list[dict]:
     out = []
-    for k in keys:
+    for k in _SNAPSHOT_KEYS[market]:
         idx = next((i for i in indices if i["key"] == k), None)
         if idx:
-            out.append({"name": idx["name"], "value": idx["value"],
-                        "changePct": idx["changePct"], "unit": idx["unit"]})
+            out.append({"key": k, "name": idx["name"], "value": idx["value"],
+                        "change": idx.get("change"), "changePct": idx["changePct"],
+                        "unit": idx["unit"], "date": idx.get("date")})
+    for key, f in (futures or {}).items():
+        if f.get("live"):
+            out.append({"key": key, "name": f"{f['name']}(실시간)", "value": f["value"],
+                        "change": None, "changePct": f["changePct"], "unit": "pt",
+                        "date": f.get("date")})
     return out
 
 
-def _pick_news(news: list[dict]) -> list[dict]:
+def _futures() -> dict:
+    """미국 지수 선물 — 미장 개장 전 실시간 방향. 지수 카드와 달리 진행 중인 봉을 쓴다.
+
+    사이트의 지수 카드는 "마감 기준"이 원칙이라 여기서만 받는다. `live` 는 오늘 세션이
+    아직 진행 중인 봉인지 — 아니면(주말·휴장) 전망 점수에 넣지 않는다.
+    """
+    out = {}
+    for key, name in _FUTURES:
+        try:
+            df = prices.fetch_ohlcv(key, years=1)
+        except Exception as exc:
+            log.warn(f"futures {key} skipped: {exc}")
+            continue
+        if df is None or len(df) < 2:
+            continue
+        q = prices.quote_from(df)
+        live = not session_closed("US", df.index[-1].date())
+        out[key] = {"name": name, "value": q.get("close"), "changePct": q.get("changePct"),
+                    "date": q.get("date"), "live": live}
+    return out
+
+
+def _leaders(market: str, tickers: list[dict]) -> dict:
+    """해설에 넘길 대표 종목 등락 — 국장 시총 상위 + 미국 대표주."""
+    kr = sorted((t for t in tickers if t.get("market") == "KR" and t.get("marcap")
+                 and t.get("exchange") != "ETF"), key=lambda t: -t["marcap"])
+    us_by_code = {t["code"]: t for t in tickers if t.get("market") == "US"}
+    us = [us_by_code[c] for c in US_BELLWETHERS if c in us_by_code]
+    pick = lambda rows: [{"name": t["name"], "changePct": t.get("changePct"),  # noqa: E731
+                          "date": t.get("date")} for t in rows]
+    return {"KR": pick(kr[:BRIEF_KR_LEADERS]), "US": pick(us)}
+
+
+# --------------------------------------------------------------------------
+# 시황 기사
+# --------------------------------------------------------------------------
+def _market_wrap(market: str, indices: list[dict], since: datetime) -> list[dict]:
+    queries = list(WRAP_QUERIES.get(market, []))
+    keys = ("KS11",) if market == "KR" else ("US500", "IXIC")
+    moves = [i.get("changePct") for i in indices if i["key"] in keys and i.get("changePct") is not None]
+    if moves:
+        big = max(moves, key=abs)
+        if abs(big) >= WRAP_BIG_MOVE_PCT:
+            why = WRAP_WHY_QUERIES.get((market, "down" if big < 0 else "up"))
+            if why:
+                queries.append(why)
+    hours = (now_utc() - since).total_seconds() / 3600
+    days = min(3, max(1, math.ceil(hours / 24)))
+    try:
+        items = news_mod.fetch_market_wrap(market, queries, days=days, per_query=WRAP_PER_QUERY)
+    except Exception as exc:          # 시황 기사가 없어도 브리핑은 나간다
+        log.warn(f"market wrap skipped: {exc}")
+        return []
+    items = [w for w in items if (parse_iso(w.get("publishedAt")) or now_utc()) >= since]
+    items.sort(key=lambda w: w.get("publishedAt") or "", reverse=True)
+    return items[:25]
+
+
+# --------------------------------------------------------------------------
+# LLM 해설
+# --------------------------------------------------------------------------
+_INSTRUCT = """당신은 한국 개인투자자에게 매일 시장 브리핑을 쓰는 애널리스트입니다. 독자는 주식 초보지만
+"경제가 어떻게 흘러가서 주가가 이렇게 움직이는지"를 이해하고 싶어 합니다.
+
+원칙
+- 사실(숫자·사건·발언)은 아래 [자료]에 있는 것만 씁니다. 자료에 없는 수치·사건·발언을 지어내지 마세요.
+  금리·환율·물가가 주가에 미치는 일반적인 원리는 설명에 써도 됩니다.
+- 원인은 근거와 함께 씁니다("시황 기사들은 ~를 원인으로 꼽습니다", "~라는 분석이 나옵니다"). 근거가 약하면 단정하지 마세요.
+- 쉬운 존댓말. 전문용어는 처음 나올 때 괄호로 짧게 풀이합니다. 예: 서킷브레이커(지수가 8% 넘게 빠지면 20분간 거래를 멈추는 장치)
+- 매수·매도 권유, 목표가, "지금 사라/팔아라" 같은 문장은 금지입니다. 전망은 조건을 단 시나리오로 씁니다.
+- [오늘 장 전망 점수]와 반대되는 분위기로 쓰지 마세요.
+
+JSON 하나로만 답하세요:
+{{"headline": "오늘 시장을 한 문장으로 (40자 안팎)",
+ "threeLines": ["...", "...", "..."],
+ "analysis": [{{"title": "{s0}", "body": "..."}}, {{"title": "{s1}", "body": "..."}},
+              {{"title": "{s2}", "body": "..."}}, {{"title": "{s3}", "body": "..."}}],
+ "news": [{{"id": 후보 번호, "why": "...", "titleKo": "영문 기사일 때만 한국어 제목"}}]}}
+
+threeLines — 오늘 꼭 알아야 할 3가지
+- 서로 다른 축에서 하나씩 고르세요: ① 직전 세션의 핵심 사건과 그 원인 ② 밤사이 새로 나온 재료 ③ 오늘 이후를 좌우할 일정·변수.
+  세 줄이 같은 사건을 말만 바꿔 반복하면 안 됩니다.
+- 각 줄은 한 문장으로 "무슨 일이 있었고 → 그래서 오늘 시장에 무슨 의미인지"를 담고, 자료의 구체적인 숫자·이름을 넣습니다.
+- 지표 칸에 이미 있는 등락률을 나열만 하는 줄은 금지입니다. 단, 지수 급변 자체가 핵심 사건이면 원인과 함께 쓰세요.
+- 차트 신호, 매수·매도 우위 종목 수 이야기는 쓰지 마세요.
+- [어제 브리핑의 3가지]와 같은 이야기는 새 진전이 없으면 빼고 다른 주제를 고르세요.
+
+analysis — 시장 해설 (각 2~4문장, "{s2}"는 3~5문장)
+- {s0}: {d0}
+- {s1}: {d1}
+- {s2}: 원인들이 어떻게 이어지는지 인과 사슬로 설명합니다 (예: 미국 물가↑ → 금리 인하 기대↓ → 성장주 부담 → 외국인 반도체 매도 → 코스피 하락).
+  기술·산업(AI 투자, 반도체 사이클 등), 정책·외교(관세, 수출통제, 지정학), 금리·환율, 수급(외국인, 신용융자, 연기금 등) 가운데 자료에 근거가 있는 것을 짚으세요.
+  하루짜리 사건인지, 며칠째 이어지는 흐름인지도 [지표]의 5일·20일 등락으로 밝혀 주세요.
+- {s3}: 자료에 나온 구체적인 일정·숫자 2~3개(예: 오늘 밤 ○○ 실적, ○○ 지표 발표)와, 그 결과가 어느 쪽이면 시장이 어떻게 반응할 수 있는지를 조건부로 씁니다.
+  "연준 발언에 주목해야 합니다" 같은 막연한 문장은 금지입니다. 좋은 재료와 나쁜 재료가 함께 있으면 둘 다 짚으세요.
+
+news — 주요 뉴스 {n}개
+- [후보 기사]에서 오늘 시장을 이해하는 데 가장 중요한 {n}개를 중요한 순서로 고르세요. 같은 사건은 하나만, 지역 행사·사회 단신·광고성 기사는 빼세요.
+- why: 그 기사에만 해당하는 한 문장 — 기사 속 주체·숫자를 넣어 누가 또는 무엇이 어떤 영향을 받는지. "실적은 주가에 중요합니다",
+  "투자 심리에 영향을 줄 수 있습니다" 같은 일반론은 금지입니다.
+"""
+
+_SECTION_GUIDE = {
+    "KR": ("지수가 얼마나, 왜 움직였는지. 수급(외국인·기관·개인)과 주도 업종·종목을 근거로.",
+           "미국 증시에서 무슨 일이 있었고 오늘 한국 시장에 어떤 의미인지 (반도체·AI·금리·환율 경로로)."),
+    "US": ("미국 지수가 얼마나, 왜 움직였는지. 주도 업종·종목과 금리·물가를 근거로.",
+           "오늘 아시아 증시와 미국 선물에서 무슨 일이 있었고 오늘 밤 미국장에 어떤 의미인지."),
+}
+
+
+def _commentary(ctx: dict):
+    """LLM 해설. 실패하면 None — 호출부가 규칙 요약으로 내려간다."""
+    if not llm.available():
+        return None
+    market = ctx["market"]
+    s = _SECTIONS[market]
+    g = _SECTION_GUIDE[market]
+    prompt = (_INSTRUCT.format(s0=s[0], s1=s[1], s2=s[2], s3=s[3], d0=g[0], d1=g[1],
+                               n=BRIEF_NEWS_TOTAL)
+              + "\n[자료]\n" + context_text(ctx))
+    data = llm.brief_analysis(prompt)
+    if not data:
+        log.warn(f"{market}: LLM 해설 실패 — 규칙 요약으로 보냅니다")
+        return None
+    parsed = parse_commentary(data, ctx["candidates"], market)
+    if parsed is None:
+        log.warn(f"{market}: LLM 응답 형식이 맞지 않음 — 규칙 요약으로 보냅니다")
+    return parsed
+
+
+def context_text(ctx: dict) -> str:
+    """프롬프트의 [자료] 부분. 테스트가 이 문자열로 무엇이 넘어가는지 확인한다."""
+    market = ctx["market"]
+    now = now_utc()
+    local = now.astimezone(KST if market == "KR" else ET)
+    kst = now.astimezone(KST)
+    session = ctx["session"]
+    L: list[str] = []
+    if market == "KR":
+        L.append(f"[작성 시점] {kst:%Y-%m-%d %H:%M} KST · 국장 개장 전 브리핑 "
+                 f"(오늘 {session:%m/%d}({WEEKDAY_KR[session.weekday()]}) 국장은 09:00 개장)")
+    else:
+        L.append(f"[작성 시점] 미국 동부 {local:%Y-%m-%d %H:%M} (한국 {kst:%m/%d %H:%M}) · "
+                 f"미장 개장 전 브리핑 (오늘 {session:%m/%d} 미국장은 09:30 ET 개장)")
+    o = ctx["outlook"]
+    L.append(f"[오늘 장 전망 점수 — 규칙 계산] {o['score']}점 '{o['label']}' · 근거: {o.get('reason') or '-'}")
+
+    L.append("\n[지표] 종가 기준. 괄호: 최근 5거래일·20거래일 등락, 52주 최고 종가 대비")
+    for i in ctx["indices"]:
+        if i.get("value") is None:
+            continue
+        L.append("- " + _index_line(i))
+    for key, f in (ctx.get("futures") or {}).items():
+        if f.get("live") and f.get("changePct") is not None:
+            L.append(f"- {f['name']} {f['value']:,.2f} (실시간) {f['changePct']:+.2f}%")
+
+    flows = ctx.get("flows")
+    if flows:
+        rows = []
+        for name, label in (("KOSPI", "코스피"), ("KOSDAQ", "코스닥")):
+            f = flows.get(name)
+            if f:
+                rows.append(f"{label}({f['date'][5:]}) 외국인 {flows_mod.eok_label(f['foreign'])} · "
+                            f"기관 {flows_mod.eok_label(f['institution'])} · "
+                            f"개인 {flows_mod.eok_label(f['individual'])}")
+        if rows:
+            L.append("\n[수급] 순매수(+)/순매도(-), 원")
+            L.extend(f"- {r}" for r in rows)
+
+    leaders = ctx.get("leaders") or {}
+    for mk, label in (("KR", "국장 시총 상위"), ("US", "미국 대표주")):
+        rows = [r for r in leaders.get(mk, []) if r.get("changePct") is not None]
+        if rows:
+            day = rows[0].get("date") or ""
+            L.append(f"\n[{label}] ({day[5:]} 종가)")
+            L.append(", ".join(f"{r['name']} {r['changePct']:+.1f}%" for r in rows))
+
+    movers = [m for m in ctx.get("movers") or [] if m.get("changePct") is not None]
+    if movers:
+        L.append("\n[급등락 종목] (직전 세션)")
+        for m in movers:
+            note = f" — {m['note']}" if m.get("note") else ""
+            L.append(f"- {m['name']} {m['changePct']:+.1f}%{note}")
+
+    wrap = ctx.get("wrap") or []
+    if wrap:
+        L.append("\n[시황 기사 제목] 최근 순")
+        for w in wrap:
+            L.append(f"- [{_stamp(w.get('publishedAt'))} {w.get('source', '')}] {w['title']}")
+
+    cands = ctx.get("candidates") or []
+    if cands:
+        L.append("\n[후보 기사] 번호로 고르세요")
+        for i, n in enumerate(cands, 1):
+            summary = T.truncate(n.get("summary") or "", 140)
+            extra = f" (같은 사건 다른 매체 {len(n['related'])}건)" if n.get("related") else ""
+            tick = ", ".join(t["name"] for t in (n.get("tickers") or [])[:2])
+            tick = f" #{tick}" if tick else ""
+            L.append(f"[{i}] ({n.get('market')} · {n.get('source', '')} · {_stamp(n.get('publishedAt'))}){tick} "
+                     f"{n['title']}{extra}" + (f"\n    요약: {summary}" if summary else ""))
+
+    cal = ctx.get("calendar") or []
+    if cal:
+        L.append("\n[예정된 실적 발표]")
+        L.extend(f"- {c['title']} · {c['time']}" for c in cal)
+
+    prev = ctx.get("prev") or {}
+    if prev.get("threeLines"):
+        L.append(f"\n[어제 브리핑의 3가지] ({prev.get('date')}) — 새 진전이 없으면 반복 금지")
+        L.extend(f"- {line}" for line in prev["threeLines"])
+    return "\n".join(L)
+
+
+def _index_line(i: dict) -> str:
+    unit = i.get("unit")
+    v = i["value"]
+    if unit == "%":
+        value = f"{v:.2f}%"
+        chg = f"{i['change'] * 100:+.0f}bp" if i.get("change") is not None else ""
+    else:
+        value = f"{v:,.2f}" + ("원" if unit == "원" else "")
+        chg = f"{i['changePct']:+.2f}%" if i.get("changePct") is not None else ""
+    trend = [f"{label} {i[k]:+.1f}%" for k, label in
+             (("change5d", "5일"), ("change20d", "20일"), ("fromHigh52w", "고점 대비"))
+             if i.get(k) is not None]
+    extra = f" ({', '.join(trend)})" if trend else ""
+    gap = i.get("overnightGap")
+    gap_txt = f" · 코스피 마감 뒤 미국장에서 {gap:+.1f}% 더 움직임" if gap is not None else ""
+    day = (i.get("date") or "")[5:]
+    return f"{i['name']} {value} ({day}) {chg}{extra}{gap_txt}"
+
+
+def _stamp(value: str | None) -> str:
+    dt = parse_iso(value)
+    return dt.astimezone(KST).strftime("%m/%d %H:%M") if dt else "?"
+
+
+def parse_commentary(data: dict, cands: list[dict], market: str):
+    """LLM 응답을 검증해 (headline, threeLines, analysis, picks) 로. 못 쓰면 None.
+
+    모델이 지시를 어겨도 브리핑에 그대로 새지 않게 여기서 거른다 — 차트 신호 줄,
+    없는 후보 번호, 중복 번호, 비어 있는 해설 단락.
+    """
+    def text(v, limit: int) -> str:
+        return T.truncate(" ".join(str(v or "").split()), limit)
+
+    three = [text(x, 220) for x in (data.get("threeLines") or []) if isinstance(x, str)]
+    three = [x for x in three if x and "차트 지표" not in x and "매수 우위" not in x][:3]
+    if len(three) < 2:
+        return None
+
+    analysis = []
+    titles = _SECTIONS[market]
+    for sec in data.get("analysis") or []:
+        if not isinstance(sec, dict):
+            continue
+        body = text(sec.get("body"), 900)
+        if body:
+            analysis.append({"title": text(sec.get("title"), 20) or titles[len(analysis) % 4],
+                             "body": body})
+    analysis = analysis[:4] or None
+
+    picks, used = [], set()
+    for row in data.get("news") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            idx = int(row.get("id")) - 1
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= idx < len(cands) or idx in used:
+            continue
+        used.add(idx)
+        n = cands[idx]
+        ko = text(row.get("titleKo"), 120) if not _has_hangul(n.get("title", "")) else ""
+        picks.append((n, text(row.get("why"), 160) or None, ko or None))
+        if len(picks) >= BRIEF_NEWS_TOTAL:
+            break
+    if len(picks) < BRIEF_NEWS_TOTAL:       # 모델이 덜 골랐으면 규칙 순서로 채운다
+        rest = [n for i, n in enumerate(cands) if i not in used]
+        for n in _pick_news(rest, key="briefScore")[:BRIEF_NEWS_TOTAL - len(picks)]:
+            picks.append((n, None, None))
+
+    headline = text(data.get("headline"), 80) or three[0]
+    return headline, three, analysis, picks
+
+
+def _has_hangul(s: str) -> bool:
+    return any("가" <= ch <= "힣" for ch in s)
+
+
+# --------------------------------------------------------------------------
+# 규칙 요약 (LLM 없을 때)
+# --------------------------------------------------------------------------
+def _rule_summary(ctx: dict) -> tuple[str, list[str]]:
+    market = ctx["market"]
+    label = "국장" if market == "KR" else "미장"
+    o = ctx["outlook"]
+    headline = f"{label} 개장 전 점검 · 오늘 장 전망 {o['label']}"
+    find = {i["key"]: i for i in ctx["indices"]}
+    lines: list[str] = []
+
+    home = find.get("KS11" if market == "KR" else "US500")
+    if home and home.get("changePct") is not None:
+        move = "올라" if home["changePct"] >= 0 else "내려"
+        line = (f"직전 거래일 {home['name']}는 {abs(home['changePct']):.2f}% {move} "
+                f"{home['value']:,.2f}에 마감했습니다.")
+        f = (ctx.get("flows") or {}).get("KOSPI")
+        if market == "KR" and f and f.get("foreign"):
+            side = "순매수" if f["foreign"] > 0 else "순매도"
+            line += f" 외국인은 {flows_mod.eok_label(abs(f['foreign']))}원어치를 {side}했습니다."
+        lines.append(line)
+
+    if o.get("drivers"):
+        lines.append(f"개장 전 신호는 '{o['label']}' 쪽입니다 — {', '.join(o['drivers'])}.")
+
+    wrap = ctx.get("wrap") or []
+    cands = ctx.get("candidates") or []
+    top = wrap[0]["title"] if wrap else cands[0]["title"] if cands else None
+    if top:
+        lines.append(f"주목할 소식: {T.truncate(top, 70)}")
+    for n in cands[1:]:
+        if len(lines) >= 3:
+            break
+        if n["title"] != top:
+            lines.append(f"주목할 소식: {T.truncate(n['title'], 70)}")
+    return headline, lines[:3]
+
+
+# --------------------------------------------------------------------------
+# 뉴스·일정·차트 블록
+# --------------------------------------------------------------------------
+def _pick_news(news: list[dict], *, key: str = "importance") -> list[dict]:
     """Top stories for the brief, with a floor reserved for single-stock news.
 
     Straight importance ranking lets macro stories (Fed, FX, tariffs) take every
@@ -126,39 +543,59 @@ def _pick_news(news: list[dict]) -> list[dict]:
     ticker keeps "why did my stock move" in the brief without demoting macro
     below its own rank; the remaining seats stay pure importance order.
 
-    `news` must already be sorted by importance, descending.
-    """
-    ticker_items = [n for n in news if n.get("tickers")]
-    picks = ticker_items[:BRIEF_NEWS_TICKER_MIN]
-    chosen = {id(n) for n in picks}
+    같은 종목이 주인공인 기사는 한 자리만 준다 — 2026-10-15 국장 브리핑은 6자리 중
+    3자리가 신한지주였다.
 
+    `news` must already be sorted by `key`, descending.
+    """
+    def lead(n):
+        tickers = n.get("tickers") or []
+        return tickers[0].get("code") if tickers else None
+
+    picks: list[dict] = []
+    chosen: set[int] = set()
+    leads: set[str] = set()
+
+    def take(n) -> bool:
+        code = lead(n)
+        if id(n) in chosen or (code and code in leads):
+            return False
+        picks.append(n)
+        chosen.add(id(n))
+        if code:
+            leads.add(code)
+        return True
+
+    for n in news:
+        if sum(1 for p in picks if p.get("tickers")) >= BRIEF_NEWS_TICKER_MIN:
+            break
+        if n.get("tickers"):
+            take(n)
     for n in news:
         if len(picks) >= BRIEF_NEWS_TOTAL:
             break
-        if id(n) not in chosen:
-            picks.append(n)
-            chosen.add(id(n))
+        take(n)
 
-    picks.sort(key=lambda n: n.get("importance", 0), reverse=True)
+    picks.sort(key=lambda n: n.get(key, 0), reverse=True)
     return picks[:BRIEF_NEWS_TOTAL]
 
 
-def _overnight_us(market: str, news: list[dict]) -> list[dict]:
-    """US single-stock news for the Korean brief — the "what happened overnight".
+def _top_news(n: dict, *, why: str | None = None, title_ko: str | None = None) -> dict:
+    return {
+        "title": n["title"],
+        "titleKo": title_ko or n.get("titleKo"),
+        "url": n["url"],
+        "source": n.get("source"),
+        # 그 기사만의 한 줄 해설 (LLM). 없으면 비워 둔다 — 예전 키워드 규칙 문구
+        # ("금리가 오르면 …")는 엉뚱한 기사에 붙어서 없는 것보다 나빴다.
+        "why": why,
+        "tickers": [{"code": t["code"], "name": t["name"]}
+                    for t in n.get("tickers", [])[:3]],
+        "importance": n.get("importance"),
+    }
 
-    Only for the KR brief: the US session closes at 05:00 KST, hours before it
-    goes out, so these are stories the reader has not seen yet. Index-level moves
-    already show in `marketSnapshot`, so this block is restricted to items tagged
-    to a ticker — that is the part the snapshot cannot convey.
-    """
-    if market != "KR" or not BRIEF_OVERNIGHT_US:
-        return []
-    items = [n for n in news if n.get("market") == "US" and n.get("tickers")]
-    items.sort(key=lambda n: n.get("importance", 0), reverse=True)
-    return [_top_news(n) for n in items[:BRIEF_OVERNIGHT_US]]
 
-
-def _calendar(market: str, session_date) -> list[dict]:
+def _calendar(market: str, session_date, tickers: list[dict] | None = None) -> list[dict]:
     """오늘 예정된 재료 — 지금으로선 미국 실적 발표.
 
     브리핑에서 유일하게 **선행하는** 항목이다. 나머지는 전부 이미 일어난 일을
@@ -167,7 +604,8 @@ def _calendar(market: str, session_date) -> list[dict]:
 
     국장 브리핑(07:45~08:40 KST)에는 **그날 밤 열리는 미국장** 일정을 싣는다.
     한국 아침 기준으로 아직 안 일어난 일이라 진짜 예고가 된다. 미장 브리핑은
-    개장 직전이라 같은 날짜를 그대로 쓴다.
+    개장 직전이라 같은 날짜를 그대로 쓴다. 국장 브리핑은 한국 증시와 이어진
+    종목(`KR_LINKED_US`)만 싣는다.
     """
     if not CALENDAR_EARNINGS:
         return []
@@ -177,8 +615,10 @@ def _calendar(market: str, session_date) -> list[dict]:
         log.warn(f"calendar skipped: {exc}")
         return []
 
+    if market == "KR":
+        items = [i for i in items if i["code"] in KR_LINKED_US]
     same_day = [i for i in items if i["date"] == session_date.isoformat()]
-    picked = (same_day or items)[:CALENDAR_MAX_ITEMS]
+    picked = (same_day or items)[:CALENDAR_MAX_ITEMS if market == "US" else 3]
     return [{
         "time": i["when"],
         "title": f"{i['name']} ({i['code']}) 실적 발표",
@@ -187,42 +627,6 @@ def _calendar(market: str, session_date) -> list[dict]:
         "epsForecast": i["epsForecast"],
         "importance": "high" if (i["marcap"] or 0) >= 100_000_000_000 else "normal",
     } for i in picked]
-
-
-def _top_news(n: dict) -> dict:
-    return {
-        "title": n["title"],
-        "titleKo": n.get("titleKo"),
-        "url": n["url"],
-        "source": n.get("source"),
-        "why": _why(n),
-        "tickers": [{"code": t["code"], "name": t["name"]}
-                    for t in n.get("tickers", [])[:3]],
-        "importance": n.get("importance"),
-    }
-
-
-def _why(n: dict) -> str:
-    """One-line beginner rationale. Keyword-based; cheap and deterministic."""
-    text = f"{n.get('title', '')} {n.get('summary', '')}"
-    rules = [
-        (("금리", "FOMC", "연준", "rate", "fed"),
-         "금리가 오르면 빌린 돈으로 성장하는 기술주에 부담이 됩니다."),
-        (("환율", "원달러", "달러"),
-         "환율이 오르면 외국인이 한국 주식을 팔 유인이 커집니다."),
-        (("실적", "영업이익", "어닝", "earnings", "guidance"),
-         "실적은 주가를 움직이는 가장 직접적인 재료입니다."),
-        (("관세", "무역", "tariff", "trade"),
-         "무역·관세 이슈는 수출 기업 실적에 영향을 줍니다."),
-        (("반도체", "HBM", "chip", "AI"),
-         "반도체는 국내 증시 시가총액 비중이 커 지수 전체에 영향을 줍니다."),
-    ]
-    for keys, why in rules:
-        if any(k in text for k in keys):
-            return why
-    if n.get("tickers"):
-        return f"{n['tickers'][0]['name']} 관련 소식으로 해당 종목에 영향을 줄 수 있습니다."
-    return "오늘 시장 심리에 영향을 줄 수 있는 소식입니다."
 
 
 def _chart_signals(market: str, tickers: list[dict]) -> dict:
@@ -291,51 +695,3 @@ def _latest_event_note(code: str, market: str) -> str | None:
     if not data or not data.get("events"):
         return None
     return data["events"][0].get("headline")
-
-
-def _summary(market, snapshot, top_news, mood, chart_signals=None):
-    label = "국장" if market == "KR" else "미장"
-    snap = "\n".join(f"- {s['name']}: {s['value']} ({s['changePct']:+.2f}%)"
-                     for s in snapshot if s.get("changePct") is not None)
-    heads = "\n".join(f"- {n['title']}" for n in top_news[:6])
-    result = llm.brief_summary(label, snap, heads, mood.get("label", "중립"),
-                               _tech_line(chart_signals))
-    if result:
-        return result
-    return _rule_summary(label, snapshot, top_news, mood, chart_signals)
-
-
-def _tech_line(chart_signals) -> str:
-    """차트 분석 요약 한 줄. LLM 프롬프트와 규칙 요약이 같은 문장을 쓴다."""
-    if not chart_signals or not chart_signals.get("counts"):
-        return ""
-    c = chart_signals["counts"]
-    total = c["bullish"] + c["neutral"] + c["bearish"]
-    if not total:
-        return ""
-    line = (f"차트 지표 기준으로 추적 종목 {total}개 중 매수 우위 {c['bullish']}개, "
-            f"매도 우위 {c['bearish']}개입니다.")
-    lead = chart_signals.get("bullish") or []
-    if lead:
-        line += f" 가장 강한 신호는 {lead[0]['name']}({lead[0]['actionLabel']})입니다."
-    return line
-
-
-def _rule_summary(label, snapshot, top_news, mood, chart_signals=None):
-    headline = f"{label} 개장 전 점검 · 시장 분위기 {mood.get('label', '중립')}"
-    lines = []
-    us = next((s for s in snapshot if s["name"] in ("S&P 500", "나스닥")), None)
-    if us and us.get("changePct") is not None:
-        move = "올랐습니다" if us["changePct"] >= 0 else "내렸습니다"
-        lines.append(f"간밤 {us['name']}가 {abs(us['changePct']):.2f}% {move}.")
-    fx = next((s for s in snapshot if s["name"] == "원달러"), None)
-    if fx and fx.get("value"):
-        lines.append(f"원달러 환율은 {fx['value']:,.0f}원 수준입니다.")
-    if top_news:
-        lines.append(f"오늘 주목할 뉴스: {T.truncate(top_news[0]['title'], 40)}.")
-    tech = _tech_line(chart_signals)
-    if tech:
-        lines.append(tech)
-    while len(lines) < 3:
-        lines.append("특별한 대형 이슈 없이 무난하게 출발할 것으로 보입니다.")
-    return headline, lines[:3]

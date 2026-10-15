@@ -77,7 +77,7 @@ def test_brief_calendar_prefers_the_session_day(monkeypatch):
     ]
     monkeypatch.setattr(calendar_mod, "fetch_earnings", lambda *a, **k: items)
 
-    got = brief._calendar("KR", session)
+    got = brief._calendar("US", session)
 
     assert [c["code"] for c in got] == ["TODAY"], "당일 항목이 있으면 그것만 싣는다"
     assert got[0]["importance"] == "high", "시총 1000억 달러 이상은 강조한다"
@@ -90,7 +90,7 @@ def test_brief_calendar_falls_back_to_upcoming(monkeypatch):
               "when": "개장 전", "epsForecast": None, "marcap": 10_000_000_000}]
     monkeypatch.setattr(calendar_mod, "fetch_earnings", lambda *a, **k: items)
 
-    got = brief._calendar("KR", date(2026, 8, 20))
+    got = brief._calendar("US", date(2026, 8, 20))
 
     assert [c["code"] for c in got] == ["SOON"]
     assert got[0]["importance"] == "normal"
@@ -103,6 +103,28 @@ def test_brief_calendar_is_capped(monkeypatch):
     monkeypatch.setattr(calendar_mod, "fetch_earnings", lambda *a, **k: items)
 
     assert len(brief._calendar("US", date(2026, 8, 20))) == CALENDAR_MAX_ITEMS
+
+
+def test_kr_brief_lists_only_korea_linked_earnings(monkeypatch):
+    """국장 브리핑은 한국 증시와 이어진 종목만 싣는다.
+
+    2026-10-15 국장 브리핑 "오늘 예정" 5건 중 4건이 찰스슈왑·프로로지스·BNY멜론·
+    US뱅코프였다 — 한국 투자자가 그날 밤 볼 이유가 없는 일정이다. TSMC 만 남아야 했다.
+    또 당일 연결 종목이 없다고 무관한 당일 일정으로 채우지 않는다.
+    """
+    def row(code, day="2026-10-15"):
+        return {"date": day, "code": code, "market": "US", "name": code, "when": "개장 전",
+                "epsForecast": None, "marcap": 200_000_000_000}
+    items = [row("SCHW"), row("TSM"), row("PLD"), row("BNY"), row("USB")]
+    monkeypatch.setattr(calendar_mod, "fetch_earnings", lambda *a, **k: items)
+
+    assert [c["code"] for c in brief._calendar("KR", date(2026, 10, 15))] == ["TSM"]
+    # 미장 브리핑은 거르지 않는다.
+    assert len(brief._calendar("US", date(2026, 10, 15))) == 5
+
+    monkeypatch.setattr(calendar_mod, "fetch_earnings",
+                        lambda *a, **k: [row("SCHW"), row("NVDA", "2026-10-16")])
+    assert [c["code"] for c in brief._calendar("KR", date(2026, 10, 15))] == ["NVDA"]
 
 
 def test_calendar_failure_does_not_break_the_brief(monkeypatch):

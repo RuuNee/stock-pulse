@@ -395,12 +395,23 @@ MACRO_SYMBOLS: list[dict] = [
      "note": "미국 대표 기업 500곳의 평균 성적표. 세계 증시의 기준입니다."},
     {"key": "IXIC", "name": "나스닥", "market": "US", "group": "index", "unit": "pt",
      "note": "기술주가 많이 모인 시장입니다. 금리에 민감하게 반응합니다."},
+    # 국장 브리핑의 "오늘 장 전망"이 가장 크게 기대는 두 지표 (analyze/mood.py `outlook`).
+    # 2026-10-15 코스피 -7.6% 날 아침 브리핑이 "중립 47점"이었다 — 전날 밤 이 둘이
+    # 각각 -4.3%·-4.0% 였는데 점수식에 아예 없었다.
+    {"key": "^SOX", "name": "필라델피아 반도체", "market": "US", "group": "index", "unit": "pt",
+     "note": "미국 반도체 대표 기업 30곳을 묶은 지수입니다. 삼성전자·SK하이닉스가 코스피의 큰 몫이라, 밤사이 이 지수가 크게 움직이면 다음 날 코스피도 따라가는 경우가 많습니다."},
     {"key": "DJI", "name": "다우존스", "market": "US", "group": "index", "unit": "pt",
      "note": "미국 전통 대형 기업 30곳을 묶은 지수입니다."},
     {"key": "VIX", "name": "VIX 공포지수", "market": "US", "group": "index", "unit": "pt",
      "note": "S&P500 옵션으로 계산한 향후 30일 기대 변동성. 20 아래면 평온, 30 넘으면 시장이 겁먹은 상태예요."},
     {"key": "USD/KRW", "name": "원달러 환율", "market": "KR", "group": "fx", "unit": "원",
      "note": "1달러를 사는 데 드는 원화. 오르면 외국인이 한국 주식을 팔 유인이 커집니다."},
+    # 미국에 상장된 한국 ETF. 한국 시간 밤(미국 장중)에 거래되므로 코스피가 닫혀 있는
+    # 동안의 한국 주식 값이 여기 찍힌다. 마감 판정은 상장된 미국 장 기준이다
+    # (`closeMarket`). 홈 화면 지표 줄에는 안 나오게 group 을 따로 둔다.
+    {"key": "EWY", "name": "한국 ETF(EWY)", "market": "KR", "group": "proxy", "unit": "$",
+     "closeMarket": "US",
+     "note": "미국 증시에 상장된 한국 주식 ETF(MSCI Korea)입니다. 우리가 자는 동안 미국에서 거래되므로, 코스피 마감 뒤 이 값이 크게 움직이면 다음 날 코스피도 같은 방향으로 출발하는 경우가 많습니다."},
     {"key": "DX-Y.NYB", "name": "달러인덱스", "market": "GLOBAL", "group": "fx", "unit": "pt",
      "note": "달러가 다른 통화들 대비 얼마나 센지. 오르면 신흥국 주식에 불리합니다."},
     {"key": "^TNX", "name": "미 10년물 금리", "market": "US", "group": "rate", "unit": "%",
@@ -598,6 +609,8 @@ NEWS_MAX_ITEMS = 400
 # 30일은 게이트가 필요로 하는 것(당일)보다 한참 넉넉하다. 이 여유는 사람을
 # 위한 것이다 — "어제 브리핑 뭐 나갔지" 를 파일로 확인할 수 있어야 하고,
 # 발송 사고가 나도 며칠 지나서 들여다볼 수 있어야 한다.
+# (값은 아래 `BRIEF_KEEP_DAYS`)
+
 # 브리핑 뉴스 선별 (build/brief.py)
 #
 # 자리가 6개뿐이라 순위가 곧 브리핑의 품질이다. 그런데 importance 는 언론사
@@ -605,16 +618,94 @@ NEWS_MAX_ITEMS = 400
 # 기사가 상위를 통째로 먹고 개별 종목이 한 칸도 못 들어가는 날이 나온다.
 # 2026-08-19 미장이 그랬다 — 모더나 흑색종 임상 성공 기사가 69점으로 7위,
 # 6위(70점)에 1점 차로 밀려 브리핑에서 잘렸다. 그래서 종목 몫을 따로 떼어 둔다.
-BRIEF_NEWS_TOTAL = 6
-BRIEF_NEWS_TICKER_MIN = 2   # 개별 종목 기사에 보장하는 최소 자리
+#
+# 2026-10-15 개편: 자리를 6 → 5 로 줄였다. 같은 사건(신한지주 롯데손보 인수)이 세
+# 매체 기사로 세 자리를 먹은 날이 있었다 — 자리를 늘리는 것보다 겹치는 걸 걸러내는
+# 게 먼저다 (analyze/curate.py). 최종 선택은 LLM 이 후보 중에서 하고, LLM 이 없을
+# 때만 아래 쿼터 규칙(`_pick_news`)으로 고른다.
+BRIEF_NEWS_TOTAL = 5
+BRIEF_NEWS_TICKER_MIN = 2   # 개별 종목 기사에 보장하는 최소 자리 (LLM 없을 때)
+BRIEF_CANDIDATES = 30       # LLM 에 넘기는 후보 기사 수
+BRIEF_CANDIDATES_PER_TICKER = 2   # 후보 단계에서 같은 종목 기사는 이만큼만
 
-# 국장 브리핑에 붙이는 "밤사이 미국" 블록.
+# 국장 브리핑 후보에 넣는 미국 기사 수.
 #
 # 미장은 05:00 KST 에 닫히고 국장 브리핑은 07:45~08:40 에 나간다. 한국 투자자에게
-# 밤사이 미국 뉴스는 아침에 처음 보는 정보인데, 브리핑은 시장 필터
-# (`market in (market, "GLOBAL")`) 때문에 US 종목 기사를 통째로 버리고 지수만
-# 보여주고 있었다. 섹터 파급·보유 종목 판단에 필요한 부분이라 따로 싣는다.
-BRIEF_OVERNIGHT_US = 3      # 0 이면 블록을 끈다
+# 밤사이 미국 뉴스는 아침에 처음 보는 정보다. 예전에는 "밤사이 미국" 블록을 따로
+# 두고 종목 기사 3건을 그대로 붙였는데, 한국과 무관한 기사(BofA 벌금 2건)가 자리를
+# 차지했다. 지금은 국내 기사와 같은 후보 풀에 넣고 LLM 이 한국 시장에 의미 있는
+# 것만 고른다.
+BRIEF_US_CANDIDATES = 8     # 0 이면 미국 기사를 후보에 넣지 않는다
+
+# 브리핑 뉴스 창 — 직전 브리핑 이후에 나온 기사만 본다. 직전 브리핑이 없으면 이 시간.
+BRIEF_NEWS_FALLBACK_HOURS = 30
+
+# 한국 증시와 직접 이어진 미국 종목 — 반도체·AI 인프라·빅테크·전기차.
+# 국장 브리핑의 "오늘 밤 실적" 칸은 이 목록만 싣는다. 찰스슈왑·프로로지스 실적은
+# 한국 투자자에게 그날 밤 볼 이유가 없다 (2026-10-15 브리핑에 5건 중 4건이 그랬다).
+KR_LINKED_US = [
+    "NVDA", "MU", "TSM", "AMD", "AVGO", "ASML", "AMAT", "LRCX", "KLAC", "QCOM", "INTC",
+    "TXN", "ARM", "MRVL", "SMCI", "DELL", "ORCL", "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "TSLA", "NFLX", "CRWV", "IBM", "CSCO", "ANET",
+]
+# 브리핑 해설에 등락을 넘겨주는 미국 대표 종목 (시가총액 정보가 없어 목록으로 둔다).
+US_BELLWETHERS = ["NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "AVGO", "TSLA",
+                  "MU", "TSM", "AMD"]
+BRIEF_KR_LEADERS = 10       # 국장 시가총액 상위 몇 종목의 등락을 해설에 넘길지
+
+# 시황 기사 (collect/news.py `fetch_market_wrap`).
+#
+# 일반 RSS 는 "왜 지수가 빠졌나"를 직접 다룬 기사를 잘 못 잡는다. 2026-10-15 코스피
+# -7.6% 날, 피드 속 급락 기사들은 중요도 47~56점으로 "[게시판] 소비자원 …" (66점)
+# 보다 아래였다. 반면 구글 뉴스에 "코스피 마감"을 검색하면 원인(AI 수익성 우려,
+# 미국 물가 쇼크, 외국인 3.8조 매도)이 제목에 박힌 시황 기사가 매체별로 쏟아진다.
+# 이 제목들은 LLM 해설의 사실 근거로만 쓴다 — 기사 본문은 받지 않는다.
+WRAP_QUERIES = {
+    "KR": ["코스피 마감", "증시 전망", "뉴욕증시 마감"],
+    "US": ["stock market today", "Wall Street stocks close", "뉴욕증시"],
+}
+# 지수가 이만큼 넘게 움직인 날은 "왜"를 직접 묻는 검색을 더한다.
+WRAP_BIG_MOVE_PCT = 1.5
+WRAP_WHY_QUERIES = {
+    ("KR", "down"): "코스피 급락 원인", ("KR", "up"): "코스피 급등 이유",
+    ("US", "down"): "why stocks fell today", ("US", "up"): "why stocks rose today",
+}
+WRAP_PER_QUERY = 10
+
+# 브리핑 후보에서 빼는 기사 — 증시와 무관한 단신·행사·광고성 기사.
+NEWS_JUNK_PATTERNS = [
+    r"^\s*\[(게시판|인사|부고|포토|사진|화보|표|그래픽|알림|정정|사고|운세|날씨|모집|공지)",
+    r"외국환시세", r"이 시각 헤드라인", r"오늘의 운세",
+    r"(프로모션|이벤트|할인|적립|캠페인|기부|후원|봉사|나눔)",
+]
+# 종목 태그가 없는 기사는 이 단어 중 하나라도 있어야 브리핑 후보가 된다.
+MARKET_TERMS_KR = [
+    "증시", "코스피", "코스닥", "주가", "주식", "증권", "상장", "공모", "시총", "시가총액",
+    "금리", "환율", "달러", "원화", "엔화", "위안", "채권", "국채", "국고채",
+    "반도체", "HBM", "AI", "인공지능", "데이터센터", "실적", "영업이익", "매출", "어닝",
+    "수출", "수입", "무역", "관세", "통상", "외국인", "기관", "순매수", "순매도", "공매도",
+    "ETF", "펀드", "유가", "원유", "금값", "물가", "인플레", "CPI", "연준", "Fed", "FOMC",
+    "한은", "한국은행", "기준금리", "경기", "GDP", "고용", "배당", "자사주", "인수", "합병",
+    "M&A", "IPO", "목표가", "투자의견", "업황", "수주", "2차전지", "배터리", "조선", "방산",
+    "바이오", "자동차", "전기차", "반대매매", "신용융자", "서킷브레이커", "사이드카",
+    "가상자산", "비트코인", "수출통제", "제재", "지정학", "뉴욕증시", "나스닥", "S&P",
+    "급락", "급등", "폭락", "폭등", "신고가", "신저가", "상한가", "하한가", "특징주",
+    "증자", "최대주주", "지분", "수익률", "선물", "옵션", "변동성",
+]
+MARKET_TERMS_EN = [
+    "stock", "stocks", "shares", "market", "earnings", "fed", "rate", "yield", "inflation",
+    "cpi", "treasury", "dollar", "oil", "tariff", "chip", "semiconductor", "ai", "ipo",
+    "merger", "acquisition", "deal", "guidance", "revenue", "profit", "s&p", "nasdaq", "dow",
+    "economy", "jobs", "payroll", "gdp", "bond", "crypto", "bitcoin", "sell-off", "selloff",
+    "rally", "investor", "wall street", "export", "sanction", "china", "trade",
+]
+# 지수 전체를 움직인 사건 — 브리핑 후보 순위에서 가산점.
+MARKET_WIDE_RE = (
+    r"(코스피|코스닥|증시|뉴욕증시|주식시장|국내 증시|S&P|나스닥|다우|Wall Street|stocks|stock market|Nasdaq|Dow)"
+    r".{0,40}"
+    r"(급락|폭락|급등|폭등|서킷|사이드카|마감|하락|상승|반등|약세|강세|출렁|패닉|검은|최대|최저|"
+    r"sell-?off|rally|plunge|tumble|surge|slide|drop|fall|rise|jump|worst|best|record|sink|soar)"
+)
 
 BRIEF_KEEP_DAYS = 30
 TICKER_NEWS_DAYS = 400     # per-ticker news retained for event matching
@@ -644,8 +735,19 @@ NEGATIVE_WORDS_EN = ["plunge", "slump", "miss", "drop", "fall", "downgrade", "we
 # Free-tier limits are per-minute/per-day, so the LLM budget below is GLOBAL
 # per run (not per ticker) and calls are batched + throttled.
 # --------------------------------------------------------------------------
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+#
+# 모델을 두 개로 나눈다 (2026-10-15). 무료 쿼터는 **모델별**로 따로 센다.
+# 예전에는 data-sync 의 이벤트 해설(실행당 10회 × 하루 2번)과 브리핑이 같은 모델
+# 하나를 나눠 써서, 브리핑 차례가 왔을 때 쿼터가 바닥난 날이 있었다 — 2026-10-14
+# 국장 브리핑이 429 로 규칙 요약("간밤 S&P 500가 0.02% 내렸습니다")으로 나갔다.
+# 대량 작업은 Flash-Lite 로 옮기고, Flash 쿼터는 하루 2~3번인 브리핑 해설에 남겨 둔다.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")              # 브리핑 해설
+GEMINI_BULK_MODEL = os.getenv("GEMINI_BULK_MODEL", "gemini-2.5-flash-lite")  # 이벤트 해설·번역
 GEMINI_MAX_TOKENS = 2048
+# 브리핑 해설은 원인을 엮어 쓰는 글이라 생각(thinking) 예산을 준다. 출력 토큰 한도에
+# 생각 토큰이 같이 잡히므로 한도도 넉넉히 둔다.
+GEMINI_BRIEF_MAX_TOKENS = 8192
+GEMINI_BRIEF_THINKING = 2048
 GEMINI_DELAY_SEC = 7.0         # spacing between calls → stay under free-tier RPM (~10/min)
 
 LLM_ENABLED = True             # falls back to rules automatically without a key

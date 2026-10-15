@@ -1,13 +1,15 @@
 """Telegram delivery of the pre-market brief (md파일/04-알림과스케줄.md §2).
 
 HTML parse mode, Korean-style up=red/down=blue emoji, a one-line "왜 중요한가"
-per news item, and automatic splitting at Telegram's 4096-char limit.
+per news item (when the LLM wrote one), and automatic splitting at Telegram's
+4096-char limit.
 """
 
 from __future__ import annotations
 
 import html
 import time
+from datetime import date
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,113 +35,135 @@ def _arrow(pct) -> str:
 
 
 def render(brief: dict) -> str:
-    label = "📈 국장 장전 브리핑" if brief["market"] == "KR" else "🌙 미장 장전 브리핑"
+    """브리핑 → 텔레그램 HTML.
+
+    순서는 "읽을 이유가 큰 것부터": 오늘 장 전망 → 3가지 → 해설 → 지표 → 뉴스 →
+    일정. 2026-10-15 개편에서 뺀 것: 3줄 요약에 섞이던 차트 신호 줄, 뉴스마다 붙던
+    키워드 규칙 💡(엉뚱한 기사에 붙었다), "밤사이 미국" 별도 블록(국내 뉴스와 같은
+    후보에서 고른다), 관심 종목 블록(사이트에만 남긴다). 차트 신호는 한 줄로 줄였다.
+    """
+    market = brief["market"]
+    label = "📈 국장 장전 브리핑" if market == "KR" else "🌙 미장 장전 브리핑"
     mood = brief.get("mood", {})
     dot = {"green": "🟢", "amber": "🟡", "red": "🔴"}.get(mood.get("color"), "⚪")
 
     L: list[str] = []
     L.append(f"<b>{label}</b>")
-    L.append(f"{_e(brief['date'])}")
+    L.append(_e(_date_label(brief["date"])))
     # 개장 뒤에 도착한 브리핑을 아무 표시 없이 보내면 "장전"이라는 제목이 거짓말이
     # 된다. 늦었다는 사실을 맨 위에 박아 둔다 (config.BRIEF_LATE_CUTOFF).
     if brief.get("late"):
         L.append("\n⏰ <b>늦은 브리핑</b> — 스케줄러 지연으로 개장 뒤에 도착했습니다. "
                  "이미 장이 열린 상태로 읽어 주세요.")
     if mood.get("label"):
-        L.append(f"\n{dot} 오늘 시장 분위기: <b>{_e(mood['label'])}</b> ({mood.get('score', '?')}점)")
+        # 예전 파일(kind 없음)은 전날 기준 분위기였다 — 같은 말로 부르지 않는다.
+        title = "오늘 장 전망" if mood.get("kind") == "outlook" else "오늘 시장 분위기"
+        L.append(f"\n{dot} {title}: <b>{_e(mood['label'])}</b> ({mood.get('score', '?')}점)")
+        if mood.get("reason"):
+            L.append(f"<i>{_e(mood['reason'])}</i>")
 
     if brief.get("headline"):
-        L.append(f"\n<i>{_e(brief['headline'])}</i>")
+        L.append(f"\n<b>{_e(brief['headline'])}</b>")
 
-    L.append("\n━━━━━━━━━━━━━━")
+    L.append(_RULE)
     L.append("<b>📌 오늘 꼭 알아야 할 3가지</b>")
     for i, line in enumerate(brief.get("threeLines", []), 1):
         L.append(f"{i}. {_e(line)}")
 
-    # 브리핑에서 유일하게 앞을 보는 블록이라 위쪽에 둔다. 나머지는 전부 이미
-    # 일어난 일을 설명한다.
-    cal = brief.get("calendar", [])
-    if cal:
-        L.append("\n━━━━━━━━━━━━━━")
-        L.append("<b>📅 오늘 예정</b>")
-        for c in cal:
-            star = "⭐ " if c.get("importance") == "high" else ""
-            eps = f" · EPS 전망 {_e(c['epsForecast'])}" if c.get("epsForecast") else ""
-            L.append(f"{star}{_e(c['title'])}")
-            L.append(f"   🕐 {_e(c.get('time', '시간 미정'))}{eps}")
+    analysis = brief.get("analysis") or []
+    if analysis:
+        L.append(_RULE)
+        L.append("<b>🧭 시장 해설</b>")
+        for sec in analysis:
+            L.append(f"\n<b>▸ {_e(sec.get('title', ''))}</b>")
+            L.append(_e(sec.get("body", "")))
+    elif brief.get("wrapHeadlines"):
+        # 해설을 못 만든 날(LLM 실패)에도 "왜"의 실마리는 남긴다 — 시황 기사 제목.
+        L.append(_RULE)
+        L.append("<b>🧭 시황 기사</b>")
+        for w in brief["wrapHeadlines"][:3]:
+            title = _e(w["title"])
+            link = f'<a href="{_e(w["url"])}">{title}</a>' if w.get("url") else title
+            src = f" · {_e(w['source'])}" if w.get("source") else ""
+            L.append(f"• {link}{src}")
 
     snap = brief.get("marketSnapshot", [])
     if snap:
-        L.append("\n━━━━━━━━━━━━━━")
-        L.append("<b>📊 간밤 시장</b>")
+        L.append(_RULE)
+        L.append("<b>📊 지표</b>")
         for s in snap:
-            val = f"{s['value']:,.2f}" if isinstance(s.get("value"), (int, float)) else "-"
-            L.append(f"{_e(s['name'])}  {val}  {_arrow(s.get('changePct'))}")
+            L.append(_snapshot_line(s))
+        flows = (brief.get("flows") or {}).get("KOSPI")
+        if flows:
+            L.append(f"수급(코스피 {flows['date'][5:]}): 외국인 {_eok(flows['foreign'])} · "
+                     f"기관 {_eok(flows['institution'])} · 개인 {_eok(flows['individual'])}")
 
     news = brief.get("topNews", [])
     if news:
-        L.append("\n━━━━━━━━━━━━━━")
+        L.append(_RULE)
         L.append("<b>📰 주요 뉴스</b>")
         for i, n in enumerate(news, 1):
             title = _e(n.get("titleKo") or n["title"])
             link = f'<a href="{_e(n["url"])}">{title}</a>' if n.get("url") else title
-            L.append(f"\n{i}. {link}")
+            src = f" · {_e(n['source'])}" if n.get("source") else ""
+            L.append(f"\n{i}. {link}{src}")
             if n.get("why"):
                 L.append(f"   💡 {_e(n['why'])}")
-            tks = " · ".join(_e(t["name"]) for t in n.get("tickers", []))
-            src = _e(n.get("source", ""))
-            meta = " · ".join(x for x in (tks, src) if x)
-            if meta:
-                L.append(f"   🏷 {meta}")
 
-    # 국장 브리핑 전용. 미장은 05:00 KST 에 닫혀서 이 기사들은 독자가 아직 못 본
-    # 것들이다 — 간밤 시장 스냅샷이 지수만 보여주는 자리를 종목 단위로 메운다.
-    overnight = brief.get("overnightUs", [])
-    if overnight:
-        L.append("\n━━━━━━━━━━━━━━")
-        L.append("<b>🌏 밤사이 미국 — 종목</b>")
-        for n in overnight:
-            title = _e(n.get("titleKo") or n["title"])
-            link = f'<a href="{_e(n["url"])}">{title}</a>' if n.get("url") else title
-            tks = " · ".join(_e(t["name"]) for t in n.get("tickers", []))
-            L.append(f"\n• {link}")
-            if tks:
-                L.append(f"   🏷 {tks}")
+    # 브리핑에서 유일하게 앞을 보는 블록. 국장 브리핑에는 그날 밤 미국장 일정이 실린다.
+    cal = brief.get("calendar", [])
+    if cal:
+        L.append(_RULE)
+        L.append("<b>📅 오늘 밤 미국 실적</b>" if market == "KR" else "<b>📅 오늘 예정</b>")
+        for c in cal:
+            star = "⭐ " if c.get("importance") == "high" else ""
+            eps = f" · EPS 전망 {_e(c['epsForecast'])}" if c.get("epsForecast") else ""
+            L.append(f"{star}{_e(c['title'])} · {_e(c.get('time', '시간 미정'))}{eps}")
 
     chart = brief.get("chartSignals") or {}
     counts = chart.get("counts") or {}
     if counts.get("bullish") or counts.get("bearish"):
-        L.append("\n━━━━━━━━━━━━━━")
-        L.append("<b>📊 차트 분석 신호</b>")
-        total = counts.get("bullish", 0) + counts.get("neutral", 0) + counts.get("bearish", 0)
-        L.append(f"추적 {total}종목 · 매수 우위 {counts.get('bullish', 0)} · "
-                 f"관망 {counts.get('neutral', 0)} · 매도 우위 {counts.get('bearish', 0)}")
-        for title, rows in (("강세", chart.get("bullish", [])),
-                            ("약세", chart.get("bearish", []))):
-            if not rows:
-                continue
-            L.append(f"\n<b>{title}</b>")
-            for r in rows:
-                L.append(f"{_e(r.get('actionEmoji', '·'))} {_e(r['name'])} "
-                         f"<b>{_e(r['actionLabel'])}</b> ({r['score']:+d}점)")
-                L.append(f"   {_e(r['headline'])}")
-        if chart.get("note"):
-            L.append(f"\n<i>{_e(chart['note'])}</i>")
-
-    watch = brief.get("watchlistMoves", [])
-    if watch:
-        L.append("\n━━━━━━━━━━━━━━")
-        L.append("<b>👀 관심 종목 움직임</b>")
-        for w in watch:
-            note = f"  {_e(w['note'])}" if w.get("note") else ""
-            sig = (f"  {_e(w.get('signalEmoji') or '·')} {_e(w['signal'])}"
-                   if w.get("signal") else "")
-            L.append(f"{_e(w['name'])}  {_arrow(w.get('changePct'))}{sig}{note}")
+        ups = "·".join(_e(r["name"]) for r in chart.get("bullish", [])[:2])
+        downs = "·".join(_e(r["name"]) for r in chart.get("bearish", [])[:2])
+        names = " — ".join(x for x in (f"강세 {ups}" if ups else "",
+                                        f"약세 {downs}" if downs else "") if x)
+        L.append(f"\n📈 차트 신호(지표만 본 기계적 판정): 매수 우위 {counts.get('bullish', 0)} · "
+                 f"매도 우위 {counts.get('bearish', 0)}" + (f"\n   {names}" if names else ""))
 
     if brief.get("siteUrl"):
         L.append(f"\n🔗 <a href=\"{_e(brief['siteUrl'])}\">자세히 보기</a>")
     L.append(f"\nℹ️ {_e(brief['disclaimer'])}")
     return "\n".join(L)
+
+
+_RULE = "\n━━━━━━━━━━━━━━"
+
+
+def _date_label(day: str) -> str:
+    try:
+        d = date.fromisoformat(day)
+    except ValueError:
+        return day
+    return f"{d.isoformat()} ({'월화수목금토일'[d.weekday()]})"
+
+
+def _snapshot_line(s: dict) -> str:
+    v = s.get("value")
+    if s.get("unit") == "%":
+        # 금리는 % 변화율이 아니라 bp(0.01%p)로 읽는다. "-0.52%" 는 금리가 0.52%p
+        # 내렸다는 말로 오해된다 — 실제로는 0.03%p 였다.
+        val = f"{v:.2f}%" if isinstance(v, (int, float)) else "-"
+        chg = s.get("change")
+        move = (f"{_UP if chg >= 0 else _DOWN} {chg * 100:+.0f}bp"
+                if isinstance(chg, (int, float)) else _arrow(s.get("changePct")))
+        return f"{_e(s['name'])}  {val}  {move}"
+    val = f"{v:,.2f}" if isinstance(v, (int, float)) else "-"
+    return f"{_e(s['name'])}  {val}  {_arrow(s.get('changePct'))}"
+
+
+def _eok(value: int) -> str:
+    from ..collect.flows import eok_label
+    return _e(eok_label(value))
 
 
 def _split(text: str) -> list[str]:

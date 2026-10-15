@@ -19,6 +19,7 @@ from ..config import (
     EVENT_BACKFILL_MAX_AGE_DAYS,
     EVENT_BACKFILL_MAX_PER_TICKER,
     EVENT_NEWS_BACKFILL,
+    GEMINI_BULK_MODEL,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
     HISTORY_YEARS,
@@ -149,11 +150,11 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     prev = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
     movers = prev.get("movers", {})
     sectors = prev.get("sectors", {})
+    breadth = prev.get("breadth", {})
     # build()와 같은 이유로 요청한 시장만 갱신하고 나머지는 이전 값을 유지한다.
     market_mood = dict(prev.get("marketMood") or {})
     for m in markets:
-        market_mood[m] = mood.score_market(
-            m, macro_indices, movers.get(m, {"up": [], "down": []}))
+        market_mood[m] = mood.score_market(m, macro_indices, breadth.get(m))
 
     prev_news = io.read_json(DATA_DIR / "news" / "latest.json", {}) or {}
     all_news = _merge_news(prev_news.get("items", []), market_news, markets)
@@ -163,6 +164,7 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
         "indices": macro_indices,
         "sectors": sectors,
         "movers": movers,
+        "breadth": breadth,
         "marketMood": market_mood,
     }
     io.write_json(DATA_DIR / "market" / "overview.json", overview)
@@ -221,7 +223,7 @@ def _translate(strings: list[str]) -> None:
 def _translate_feed(market_news: list[dict]) -> None:
     """Priority pass: translate the top-importance US/GLOBAL feed items. Bounded
     to TRANSLATE_FEED_TOP so it fits the free-tier daily budget."""
-    if not (TRANSLATE_FOREIGN and llm.available()):
+    if not (TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODEL)):
         return
     feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
     feed.sort(key=lambda n: n.get("importance", 0), reverse=True)
@@ -247,7 +249,7 @@ def _translate_ticker_news(details: list[dict]) -> None:
             out.extend(e.get("news", []))
         return out
 
-    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available():
+    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODEL):
         titles = [n.get("title") for d in details for n in foreign(d)]
         _translate([t for t in titles if t])
     for d in details:
@@ -435,17 +437,40 @@ def _build_overview(macro_indices, index_items, markets, previous=None) -> dict:
     previous = previous or {}
     sectors = dict(previous.get("sectors") or {})
     movers = dict(previous.get("movers") or {})
+    breadth = dict(previous.get("breadth") or {})
     market_mood = dict(previous.get("marketMood") or {})
     for m in markets:
         sectors[m] = _sector_heatmap(index_items, m)
         movers[m] = _movers(index_items, m)
-        market_mood[m] = mood.score_market(m, macro_indices, movers[m])
+        breadth[m] = _breadth(index_items, m)
+        market_mood[m] = mood.score_market(m, macro_indices, breadth[m])
     return {
         "generatedAt": iso(now_utc()),
         "indices": macro_indices,
         "sectors": sectors,
         "movers": movers,
+        "breadth": breadth,
         "marketMood": market_mood,
+    }
+
+
+def _breadth(items: list[dict], market: str) -> dict:
+    """마지막 거래일에 오른 종목·내린 종목 수 (ETF 제외).
+
+    분위기 점수의 25% 가 이 비율이다. 예전에는 상위 8·하위 8 `movers` 목록의 길이를
+    셌다 — 늘 8 대 8 이라 사실상 상수였다. 날짜가 늦은 종목(거래정지 등)은 뺀다.
+    """
+    rows = [it for it in items if it.get("market") == market and it.get("exchange") != "ETF"
+            and it.get("changePct") is not None and it.get("date")]
+    if not rows:
+        return {"up": 0, "down": 0, "flat": 0, "date": None}
+    last = max(it["date"] for it in rows)
+    rows = [it for it in rows if it["date"] == last]
+    return {
+        "up": sum(1 for it in rows if it["changePct"] > 0),
+        "down": sum(1 for it in rows if it["changePct"] < 0),
+        "flat": sum(1 for it in rows if it["changePct"] == 0),
+        "date": last,
     }
 
 

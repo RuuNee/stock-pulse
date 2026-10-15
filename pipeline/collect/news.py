@@ -150,6 +150,45 @@ def fetch_event_news(ticker: dict, event_date: str, *, window: int = 2,
                              limit=limit)
 
 
+def fetch_market_wrap(market: str, queries: list[str], *, days: int = 1,
+                      per_query: int = 10) -> list[dict]:
+    """시황 기사 제목 — "오늘 지수가 왜 이렇게 움직였나"를 직접 다룬 기사들.
+
+    구글 뉴스 검색에 `when:Nd` 를 붙여 최근 기사만 받는다. 한글이 든 검색어는 한국판,
+    아니면 미국판 구글 뉴스로 보낸다. 링크는 구글 뉴스 중계 주소라 브라우저에서는
+    원문으로 넘어가지만 서버에서 본문을 읽을 수는 없다 — 제목만 쓴다.
+    실패한 검색어는 건너뛴다. 하나도 못 받아도 브리핑은 나간다.
+    """
+    items: list[dict] = []
+    for query in queries:
+        korean = any("가" <= ch <= "힣" for ch in query)
+        template = GOOGLE_NEWS_KR if korean else GOOGLE_NEWS_US
+        url = template.format(query=quote(f"{query} when:{max(1, days)}d"))
+        time.sleep(GOOGLE_NEWS_DELAY_SEC)
+        try:
+            entries = (_parse(url).entries or [])[:per_query]
+        except Exception as exc:
+            log.warn(f"wrap query failed '{query}': {exc}")
+            continue
+        for entry in entries:
+            item = _entry_to_item(entry, source="Google News", source_key="google_wrap",
+                                  market=market, weight=0.8)
+            if not item:
+                continue
+            raw_source = entry.get("source")
+            publisher = raw_source.get("title") if isinstance(raw_source, dict) else \
+                getattr(raw_source, "title", None) if raw_source else None
+            if publisher:
+                item["source"] = T.clean_html(publisher)
+            # 구글 뉴스 요약은 제목을 한 번 더 적은 것뿐이라 버린다.
+            item["summary"] = ""
+            item["wrapQuery"] = query
+            items.append(item)
+    out = dedupe(items)
+    log.ok(f"market wrap {market}: {len(out)} headlines from {len(queries)} queries")
+    return out
+
+
 def _fetch_ticker_url(url: str, ticker: dict, *, source: str, source_key: str,
                       limit: int) -> list[dict]:
     try:

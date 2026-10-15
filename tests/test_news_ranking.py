@@ -115,21 +115,20 @@ def test_picks_are_importance_ordered():
 
 
 # --------------------------------------------------------------------------
-# 3. 국장 브리핑의 "밤사이 미국" 블록
+# 3. 같은 종목 기사는 한 자리 (2026-10-15 신한지주 3자리 사고)
 # --------------------------------------------------------------------------
 
-def test_overnight_block_is_kr_only_and_ticker_scoped():
-    news = [
-        {"title": "US stock story", "market": "US", "importance": 60,
-         "url": "u", "tickers": [{"code": "MRNA", "name": "Moderna"}]},
-        {"title": "US macro story", "market": "US", "importance": 90,
-         "url": "u", "tickers": []},
-        {"title": "KR story", "market": "KR", "importance": 80,
-         "url": "u", "tickers": [{"code": "005930", "name": "삼성전자"}]},
-    ]
+def test_one_seat_per_lead_ticker():
+    """같은 사건을 매체만 바꿔 세 번 싣지 않는다."""
+    news = [_scored("'롯데손보 인수' 신한지주, 4.7% 하락", 67, ["055550"]),
+            _scored("롯데손보 품는 신한금융에 축하보다 우려", 67, ["055550"]),
+            _scored("'승자의 저주' 걱정에…롯데손보 삼킨 신한지주 급락", 66, ["055550"]),
+            _scored("LG디스플레이 목표가 하향", 71, ["034220"])]
+    news += [_scored(f"macro {i}", 60 - i) for i in range(5)]
+    news.sort(key=lambda n: n["importance"], reverse=True)
 
-    kr = brief._overnight_us("KR", news)
-    assert [n["title"] for n in kr] == ["US stock story"], \
-        "지수 수준 매크로는 marketSnapshot 이 이미 보여준다"
+    picks = brief._pick_news(news)
 
-    assert brief._overnight_us("US", news) == [], "미장 브리핑엔 붙지 않는다"
+    shinhan = [n for n in picks if n["tickers"] and n["tickers"][0]["code"] == "055550"]
+    assert len(shinhan) == 1
+    assert len(picks) == BRIEF_NEWS_TOTAL

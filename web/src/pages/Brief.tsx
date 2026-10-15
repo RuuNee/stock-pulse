@@ -81,14 +81,20 @@ function LateNotice() {
 
 function BriefBody({ brief }: { brief: BriefT }) {
   const dot = { green: "🟢", amber: "🟡", red: "🔴" }[brief.mood.color ?? "amber"];
+  // 예전 파일(kind 없음)의 점수는 전날 기준 분위기였다 — 전망이라고 부르지 않는다.
+  const moodTitle = brief.mood.kind === "outlook" ? "오늘 장 전망" : "오늘 시장 분위기";
+  const analysis = brief.analysis ?? [];
   return (
     <div className="flex flex-col gap-4">
       <div className="card p-4">
         <div className="text-sm" style={{ color: "var(--muted)" }}>{fmtDateKr(brief.date)}</div>
         {brief.mood.label && (
-          <div className="text-lg font-bold mt-1">{dot} 오늘 시장 분위기: {brief.mood.label} ({brief.mood.score}점)</div>
+          <div className="text-lg font-bold mt-1">{dot} {moodTitle}: {brief.mood.label} ({brief.mood.score}점)</div>
         )}
-        {brief.headline && <p className="mt-2 leading-relaxed">{brief.headline}</p>}
+        {brief.mood.reason && (
+          <div className="mt-0.5 text-sm" style={{ color: "var(--muted)" }}>{brief.mood.reason}</div>
+        )}
+        {brief.headline && <p className="mt-2 font-semibold leading-relaxed">{brief.headline}</p>}
       </div>
 
       <section className="card p-4">
@@ -103,22 +109,43 @@ function BriefBody({ brief }: { brief: BriefT }) {
         </ol>
       </section>
 
-      {(brief.calendar?.length ?? 0) > 0 && <CalendarSection items={brief.calendar!} />}
+      {analysis.length > 0 ? (
+        <AnalysisSection sections={analysis} />
+      ) : (
+        (brief.wrapHeadlines?.length ?? 0) > 0 && <WrapSection items={brief.wrapHeadlines!} />
+      )}
 
       {brief.marketSnapshot.length > 0 && (
         <section className="card p-4">
-          <h2 className="font-bold mb-2">📊 간밤 시장</h2>
+          <h2 className="font-bold mb-2">📊 지표</h2>
           <div className="flex flex-col gap-1.5">
             {brief.marketSnapshot.map((s) => (
               <div key={s.name} className="flex items-center justify-between text-sm">
                 <span>{s.name}</span>
                 <div className="flex items-center gap-3">
-                  <span className="tabular-nums">{s.value != null ? s.value.toLocaleString("ko-KR", { maximumFractionDigits: 2 }) : "-"}</span>
-                  <ChangeBadge pct={s.changePct} size="sm" />
+                  <span className="tabular-nums">
+                    {s.value != null
+                      ? s.value.toLocaleString("ko-KR", { maximumFractionDigits: 2 }) + (s.unit === "%" ? "%" : "")
+                      : "-"}
+                  </span>
+                  {/* 금리는 % 변화율이 아니라 bp 로 — "-0.52%" 는 0.52%p 하락으로 오해된다 */}
+                  {s.unit === "%" && s.change != null ? (
+                    <span className="text-xs tabular-nums" style={{ color: "var(--muted)" }}>
+                      {s.change >= 0 ? "+" : ""}{Math.round(s.change * 100)}bp
+                    </span>
+                  ) : (
+                    <ChangeBadge pct={s.changePct} size="sm" />
+                  )}
                 </div>
               </div>
             ))}
           </div>
+          {brief.flows?.KOSPI && (
+            <p className="mt-2.5 pt-2 border-t text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+              수급(코스피 {brief.flows.KOSPI.date.slice(5)}) · 외국인 {eok(brief.flows.KOSPI.foreign)} · 기관{" "}
+              {eok(brief.flows.KOSPI.institution)} · 개인 {eok(brief.flows.KOSPI.individual)}
+            </p>
+          )}
         </section>
       )}
 
@@ -140,6 +167,8 @@ function BriefBody({ brief }: { brief: BriefT }) {
           </div>
         </section>
       )}
+
+      {(brief.calendar?.length ?? 0) > 0 && <CalendarSection items={brief.calendar!} market={brief.market} />}
 
       {(brief.overnightUs?.length ?? 0) > 0 && <OvernightSection items={brief.overnightUs!} />}
 
@@ -170,12 +199,56 @@ function BriefBody({ brief }: { brief: BriefT }) {
   );
 }
 
-/** 📅 오늘 예정 — 브리핑에서 유일하게 앞을 보는 블록이라 위쪽에 둔다.
- *  나머지 카드는 전부 이미 일어난 일을 설명한다. 텔레그램 렌더러와 같은 자리. */
-function CalendarSection({ items }: { items: NonNullable<BriefT["calendar"]> }) {
+/** 🧭 시장 해설 — 왜 움직였고 무엇이 이어지고 앞으로 무엇을 볼지. 텔레그램과 같은 순서. */
+function AnalysisSection({ sections }: { sections: { title: string; body: string }[] }) {
   return (
     <section className="card p-4">
-      <h2 className="font-bold mb-2">📅 오늘 예정</h2>
+      <h2 className="font-bold mb-2">🧭 시장 해설</h2>
+      <div className="flex flex-col gap-3">
+        {sections.map((sec, i) => (
+          <div key={i}>
+            <h3 className="text-sm font-semibold" style={{ color: "var(--accent)" }}>▸ {sec.title}</h3>
+            <p className="mt-1 text-sm leading-relaxed">{sec.body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 해설을 못 만든 날(LLM 실패)의 대체 — 원인을 직접 다룬 시황 기사 제목. */
+function WrapSection({ items }: { items: NonNullable<BriefT["wrapHeadlines"]> }) {
+  return (
+    <section className="card p-4">
+      <h2 className="font-bold mb-2">🧭 시황 기사</h2>
+      <div className="flex flex-col gap-2">
+        {items.slice(0, 3).map((w, i) => (
+          <a key={i} href={w.url} target="_blank" rel="noopener noreferrer" className="text-sm hover:underline">
+            • {w.title}
+            {w.source && <span style={{ color: "var(--muted)" }}> · {w.source}</span>}
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 억 원 → "-3조 7,637억" (파이프라인 flows.eok_label 과 같은 꼴) */
+function eok(v: number): string {
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  const jo = Math.floor(a / 10000);
+  const rest = a % 10000;
+  if (jo) return `${sign}${jo}조${rest ? ` ${rest.toLocaleString("ko-KR")}억` : ""}`;
+  return `${sign}${rest.toLocaleString("ko-KR")}억`;
+}
+
+/** 📅 오늘 예정 — 브리핑에서 유일하게 앞을 보는 블록. 국장 브리핑에는 그날 밤
+ *  미국장 일정 중 한국 증시와 이어진 종목만 실린다. 텔레그램 렌더러와 같은 이름. */
+function CalendarSection({ items, market }: { items: NonNullable<BriefT["calendar"]>; market: Market }) {
+  return (
+    <section className="card p-4">
+      <h2 className="font-bold mb-2">{market === "KR" ? "📅 오늘 밤 미국 실적" : "📅 오늘 예정"}</h2>
       <div className="flex flex-col gap-2">
         {items.map((c, i) => (
           <div key={c.code ?? i} className="flex items-start justify-between gap-2 text-sm">

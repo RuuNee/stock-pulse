@@ -14,12 +14,19 @@ export interface MacroIndex {
   key: string;
   name: string;
   market: Market | "GLOBAL";
-  group: "index" | "fx" | "rate" | "commodity" | "crypto";
+  /** proxy = 홈 지표 줄에는 안 띄우는 보조 지표 (EWY — 미국 상장 한국 ETF) */
+  group: "index" | "fx" | "rate" | "commodity" | "crypto" | "proxy";
   /** 이 값이 어느 날 마감인지 (YYYY-MM-DD). 장중 스냅샷을 싣지 않으므로 항상 마감일이다. */
   date: string | null;
   value: number | null;
   change: number | null;
   changePct: number | null;
+  /** 최근 5·20거래일 등락, 52주 최고 종가 대비 (%) — 예전 파일에는 없다 */
+  change5d?: number | null;
+  change20d?: number | null;
+  fromHigh52w?: number | null;
+  /** EWY 전용 — 코스피 마감 뒤 미국장에서 더 움직인 몫 (%) */
+  overnightGap?: number | null;
   unit: string;
   spark: number[];
   beginnerNote: string;
@@ -47,6 +54,8 @@ export interface Mood {
   label: string;
   color: "green" | "amber" | "red";
   reason?: string;
+  /** "outlook" = 브리핑의 개장 전 전망. 없으면 마지막 세션 분위기 (예전 브리핑 파일 포함) */
+  kind?: "outlook";
 }
 
 export interface Overview {
@@ -54,6 +63,8 @@ export interface Overview {
   indices: MacroIndex[];
   sectors: Record<Market, Sector[]>;
   movers: Record<Market, { up: MoverRef[]; down: MoverRef[] }>;
+  /** 마지막 거래일 상승·하락 종목 수 (ETF 제외). 예전 파일에는 없다 */
+  breadth?: Partial<Record<Market, { up: number; down: number; flat: number; date: string | null }>>;
   marketMood: Record<Market, Mood>;
 }
 
@@ -257,16 +268,33 @@ export interface Brief {
   headline: string;
   threeLines: string[];
   mood: Partial<Mood>;
-  marketSnapshot: { name: string; value: number | null; changePct: number | null; unit?: string }[];
+  /** LLM 시장 해설 단락 (어제 국장 · 간밤 미국 · 흐름 읽기 · 앞으로 볼 것). LLM 실패 시 null */
+  analysis?: { title: string; body: string }[] | null;
+  marketSnapshot: {
+    key?: string;
+    name: string;
+    value: number | null;
+    /** 금리(unit "%")는 이 값을 bp 로 보여 준다 */
+    change?: number | null;
+    changePct: number | null;
+    unit?: string;
+    date?: string | null;
+  }[];
+  /** 국장 투자자별 순매수 (억 원) — 국장 브리핑 전용 */
+  flows?: Partial<Record<"KOSPI" | "KOSDAQ",
+    { date: string; individual: number; foreign: number; institution: number }>> | null;
   topNews: {
     title: string;
-    titleKo?: string;
+    titleKo?: string | null;
     url: string;
     source?: string;
-    why?: string;
+    /** 그 기사만의 한 줄 해설 (LLM). 없으면 null — 예전 키워드 규칙 문구는 없앴다 */
+    why?: string | null;
     tickers: { code: string; name: string }[];
     importance?: number;
   }[];
+  /** 해설이 없을 때 "왜"의 실마리로 보여 주는 시황 기사 제목 */
+  wrapHeadlines?: { title: string; url: string; source?: string }[];
   chartSignals?: ChartSignals | null;
   watchlistMoves: {
     code: string;

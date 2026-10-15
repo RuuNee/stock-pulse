@@ -1,12 +1,15 @@
 """Google Gemini (free tier) client for the pipeline's LLM features.
 
 Three jobs: (1) beginner-friendly cause summaries for chart events, (2) the
-brief's 3-line summary, (3) auto-translating foreign (US) news to Korean.
+brief's market commentary (headline, 3 points, analysis, news picks),
+(3) auto-translating foreign (US) news to Korean.
 
-Free-tier quotas are per-minute and per-day, so this module keeps a GLOBAL
-per-run budget for event summaries, batches requests, throttles between calls,
-and degrades gracefully (returns None → callers fall back to rules) on any
-error, quota hit, or missing key. Raw REST via requests — no SDK dependency.
+Free-tier quotas are per-minute and per-day **per model**, so bulk work (event
+summaries, translation) and the brief use different models — see
+`config.GEMINI_BULK_MODEL`. Each model keeps its own failure state: a dead bulk
+model must not take the brief down with it. Calls are batched and throttled,
+and every failure degrades gracefully (returns None → callers fall back to
+rules). Raw REST via requests — no SDK dependency.
 """
 
 from __future__ import annotations
@@ -17,6 +20,9 @@ import time
 import requests
 
 from ..config import (
+    GEMINI_BRIEF_MAX_TOKENS,
+    GEMINI_BRIEF_THINKING,
+    GEMINI_BULK_MODEL,
     GEMINI_DELAY_SEC,
     GEMINI_MAX_TOKENS,
     GEMINI_MODEL,
@@ -32,89 +38,108 @@ _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:gen
 # Global per-run state.
 _budget = 0          # remaining event summaries allowed this run
 _calls = 0
-_disabled = False    # set True after a hard failure so we stop hammering
-_consec_429 = 0      # consecutive rate-limit hits → circuit breaker
+_disabled: set[str] = set()       # models that hard-failed this run
+_consec_429: dict[str, int] = {}  # per-model consecutive rate-limit hits
 
-_MAX_CONSEC_429 = 3  # after this many, give up on the LLM for the whole run
+_MAX_CONSEC_429 = 3  # after this many, give up on that model for the whole run
 
 
-def available() -> bool:
-    return LLM_ENABLED and gemini_key() is not None and not _disabled
+def available(model: str | None = None) -> bool:
+    return (LLM_ENABLED and gemini_key() is not None
+            and (model or GEMINI_MODEL) not in _disabled)
 
 
 def reset() -> None:
     """Call once at the start of a run."""
-    global _budget, _calls, _disabled, _consec_429
+    global _budget, _calls
     _budget = LLM_MAX_EVENTS_PER_RUN
     _calls = 0
-    _disabled = False
-    _consec_429 = 0
+    _disabled.clear()
+    _consec_429.clear()
 
 
-def _post(prompt: str, *, max_tokens: int = GEMINI_MAX_TOKENS, retries: int = 2):
+def _post(prompt: str, *, model: str | None = None, max_tokens: int = GEMINI_MAX_TOKENS,
+          thinking: int = 0, temperature: float = 0.3, retries: int = 2):
     """One Gemini call. Returns parsed JSON (dict|list) or None."""
-    global _calls, _disabled
+    global _calls
+    model = model or GEMINI_MODEL
     key = gemini_key()
-    if not key or _disabled:
+    if not key or model in _disabled:
         return None
 
-    global _consec_429
-    url = _ENDPOINT.format(model=GEMINI_MODEL)
+    url = _ENDPOINT.format(model=model)
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.3,
+            "temperature": temperature,
             "maxOutputTokens": max_tokens,
             "responseMimeType": "application/json",
-            # 2.5-flash is a thinking model; disable thinking for fast, clean JSON.
-            "thinkingConfig": {"thinkingBudget": 0},
+            # 2.5 계열은 생각하는 모델이다. 대량 작업은 꺼서 빠르고 깨끗한 JSON 을
+            # 받고, 원인을 엮어 써야 하는 브리핑 해설에만 예산을 준다.
+            "thinkingConfig": {"thinkingBudget": thinking},
         },
     }
 
     for attempt in range(retries + 1):
         time.sleep(GEMINI_DELAY_SEC)  # throttle to stay under free-tier RPM
         try:
-            r = requests.post(url, params={"key": key}, json=body, timeout=60)
+            r = requests.post(url, params={"key": key}, json=body, timeout=120)
         except Exception as exc:
-            log.warn(f"gemini request error: {exc}")
+            log.warn(f"gemini[{model}] request error: {exc}")
             continue
 
         if r.status_code == 429:
-            _consec_429 += 1
-            if _consec_429 >= _MAX_CONSEC_429:
-                log.warn("gemini quota exhausted (repeated 429) — disabling LLM for this run")
-                _disabled = True
+            _consec_429[model] = _consec_429.get(model, 0) + 1
+            # 어느 쿼터(분당/일일)에 걸렸는지 남긴다. 예전 로그는 "429" 만 있어서
+            # 브리핑이 왜 규칙 요약으로 나갔는지 나중에 알 수 없었다.
+            log.warn(f"gemini[{model}] rate-limited (429): {_quota_hint(r)}")
+            if _consec_429[model] >= _MAX_CONSEC_429:
+                log.warn(f"gemini[{model}] quota exhausted (repeated 429) — disabling for this run")
+                _disabled.add(model)
                 return None
-            wait = 6 * (attempt + 1)
-            log.warn(f"gemini rate-limited (429), waiting {wait}s")
-            time.sleep(wait)
+            time.sleep(6 * (attempt + 1))
             continue
         if r.status_code in (400, 403, 404):
-            # bad key / model / request — don't retry, disable for the run
-            log.warn(f"gemini {r.status_code}: {r.text[:160]} — disabling LLM for this run")
-            _disabled = True
+            # bad key / model / request — don't retry, disable this model for the run
+            log.warn(f"gemini[{model}] {r.status_code}: {r.text[:160]} — disabling for this run")
+            _disabled.add(model)
             return None
         if r.status_code >= 500:
-            log.warn(f"gemini server {r.status_code}, retrying")
+            log.warn(f"gemini[{model}] server {r.status_code}, retrying")
             continue
 
-        _consec_429 = 0
+        _consec_429[model] = 0
         _calls += 1
         try:
             data = r.json()
             cands = data.get("candidates") or []
             if not cands:
                 fb = data.get("promptFeedback", {})
-                log.warn(f"gemini empty response (block={fb.get('blockReason')})")
+                log.warn(f"gemini[{model}] empty response (block={fb.get('blockReason')})")
                 return None
             parts = cands[0].get("content", {}).get("parts") or []
-            text = "".join(p.get("text", "") for p in parts).strip()
+            # 생각 토큰이 섞여 오면 `thought: true` 파트다 — 답에서 뺀다.
+            text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+            if not text and cands[0].get("finishReason") == "MAX_TOKENS":
+                log.warn(f"gemini[{model}] hit max tokens before answering")
             return _loads(text) if text else None
         except (ValueError, KeyError) as exc:
-            log.warn(f"gemini parse failed: {exc}")
+            log.warn(f"gemini[{model}] parse failed: {exc}")
             return None
 
     return None
+
+
+def _quota_hint(r) -> str:
+    """429 응답에서 걸린 쿼터 이름만 뽑는다 (`...PerDay...` 면 일일 한도)."""
+    try:
+        details = r.json().get("error", {}).get("details", [])
+    except ValueError:
+        return r.text[:120]
+    for d in details:
+        for v in d.get("violations", []) or []:
+            return f"{v.get('quotaId', '?')} limit={v.get('quotaValue', '?')}"
+    return r.text[:120]
 
 
 def _loads(text: str):
@@ -160,7 +185,7 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
     ``items``: [{id, name, code, market, date, changePct, volumeRatio, news:[title,...]}]
     """
     global _budget
-    if not available() or _budget <= 0 or not items:
+    if not available(GEMINI_BULK_MODEL) or _budget <= 0 or not items:
         return {}
 
     allowed = items[:_budget]
@@ -179,7 +204,7 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
             )
         prompt = _EXPLAIN_INSTRUCT + "\n\n입력:\n" + "\n\n".join(blocks)
 
-        data = _post(prompt)
+        data = _post(prompt, model=GEMINI_BULK_MODEL)
         rows = data if isinstance(data, list) else (data.get("items") if isinstance(data, dict) else None)
         if not rows:
             continue
@@ -194,30 +219,19 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
 
 
 # --------------------------------------------------------------------------
-# Brief 3-line summary
+# Brief commentary — headline, 3 points, analysis, news picks (one call)
 # --------------------------------------------------------------------------
-def brief_summary(label: str, snapshot_text: str, headlines: str, mood: str,
-                  technical_text: str = "") -> tuple[str, list[str]] | None:
-    if not available():
+def brief_analysis(prompt: str) -> dict | None:
+    """브리핑 해설을 한 번에 받는다. 프롬프트 조립과 검증은 `build/brief.py` 몫이다.
+
+    한 번의 호출로 끝내는 이유는 쿼터다 — 무료 등급은 모델별 하루 요청 수가 빠듯해서
+    3줄·해설·뉴스 선택을 따로 부르면 그만큼 실패할 기회가 늘어난다.
+    """
+    if not available(GEMINI_MODEL):
         return None
-    tech = f"차트 분석 요약:\n{technical_text}\n\n" if technical_text else ""
-    prompt = (
-        "당신은 주식 초보자를 위한 한국어 시장 브리핑 작성자입니다. 사실만 전달하고 "
-        "투자 권유는 하지 않습니다.\n\n"
-        f"{label} 개장 전 브리핑. 시장 분위기: {mood}.\n"
-        f"간밤/전일 지표:\n{snapshot_text}\n\n{tech}오늘 주요 뉴스:\n{headlines}\n\n"
-        "초보 투자자가 오늘 시장을 이해하도록 headline 1개와 3줄 요약을 만드세요. "
-        "각 줄 한 문장, 존댓말, 쉬운 말. 차트 분석 요약이 주어졌다면 한 줄은 그 내용을 "
-        "'차트 지표 기준'이라고 밝히며 쓰되, 매수·매도를 권하는 문장으로 바꾸지 마세요.\n"
-        'JSON으로만: {"headline": "한 문장", "threeLines": ["...", "...", "..."]}'
-    )
-    data = _post(prompt)
-    if not isinstance(data, dict):
-        return None
-    lines = [str(x).strip() for x in (data.get("threeLines") or []) if str(x).strip()][:3]
-    if not lines:
-        return None
-    return str(data.get("headline", "")).strip(), lines
+    data = _post(prompt, model=GEMINI_MODEL, max_tokens=GEMINI_BRIEF_MAX_TOKENS,
+                 thinking=GEMINI_BRIEF_THINKING, temperature=0.4)
+    return data if isinstance(data, dict) else None
 
 
 # --------------------------------------------------------------------------
@@ -226,7 +240,7 @@ def brief_summary(label: str, snapshot_text: str, headlines: str, mood: str,
 def translate(texts: list[str]) -> list[str]:
     """Translate a list of English strings to Korean. Returns same length;
     on any failure the original string is kept for that slot."""
-    if not available() or not texts:
+    if not available(GEMINI_BULK_MODEL) or not texts:
         return list(texts)
 
     result = list(texts)
@@ -240,7 +254,7 @@ def translate(texts: list[str]) -> list[str]:
             'JSON 배열로만 답하세요: [{"i": 번호, "ko": "번역"}]\n\n'
             + numbered
         )
-        data = _post(prompt)
+        data = _post(prompt, model=GEMINI_BULK_MODEL)
         rows = data if isinstance(data, list) else None
         if not rows:
             continue
@@ -253,4 +267,5 @@ def translate(texts: list[str]) -> list[str]:
 
 
 def stats() -> str:
-    return f"gemini calls={_calls}, budget left={_budget}"
+    off = f", disabled={sorted(_disabled)}" if _disabled else ""
+    return f"gemini calls={_calls}, budget left={_budget}{off}"
