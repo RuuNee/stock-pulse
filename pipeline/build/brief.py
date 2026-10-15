@@ -97,6 +97,7 @@ def build_brief(market: str, site: dict, *, late: bool = False) -> dict:
         "indices": indices, "futures": futures, "flows": flows,
         "leaders": _leaders(market, site["tickers"]), "movers": watchlist,
         "wrap": wrap, "candidates": cands, "calendar": calendar, "prev": prev,
+        "upcoming": _upcoming(market, session_date),
     }
     commentary = _commentary(ctx)
     if commentary:
@@ -295,13 +296,14 @@ analysis — 시장 해설 (각 2~4문장, "{s2}"는 3~5문장)
 - {s2}: 원인들이 어떻게 이어지는지 인과 사슬로 설명합니다 (예: 미국 물가↑ → 금리 인하 기대↓ → 성장주 부담 → 외국인 반도체 매도 → 코스피 하락).
   기술·산업(AI 투자, 반도체 사이클 등), 정책·외교(관세, 수출통제, 지정학), 금리·환율, 수급(외국인, 신용융자, 연기금 등) 가운데 자료에 근거가 있는 것을 짚으세요.
   하루짜리 사건인지, 며칠째 이어지는 흐름인지도 [지표]의 5일·20일 등락으로 밝혀 주세요.
-- {s3}: 자료에 나온 구체적인 일정·숫자 2~3개(예: 오늘 밤 ○○ 실적, ○○ 지표 발표)와, 그 결과가 어느 쪽이면 시장이 어떻게 반응할 수 있는지를 조건부로 씁니다.
+- {s3}: [예정된 실적 발표]·[다가오는 실적 발표]·기사에 나온 구체적인 일정과 숫자 2~3개(예: 22일 테슬라 실적, 다음 주 ○○ 발표)와,
+  그 결과가 어느 쪽이면 시장이 어떻게 반응할 수 있는지를 조건부로 씁니다.
   "연준 발언에 주목해야 합니다" 같은 막연한 문장은 금지입니다. 좋은 재료와 나쁜 재료가 함께 있으면 둘 다 짚으세요.
 
 news — 주요 뉴스 {n}개
 - [후보 기사]에서 오늘 시장을 이해하는 데 가장 중요한 {n}개를 중요한 순서로 고르세요. 같은 사건은 하나만, 지역 행사·사회 단신·광고성 기사는 빼세요.
-- why: 그 기사에만 해당하는 한 문장 — 기사 속 주체·숫자를 넣어 누가 또는 무엇이 어떤 영향을 받는지. "실적은 주가에 중요합니다",
-  "투자 심리에 영향을 줄 수 있습니다" 같은 일반론은 금지입니다.
+- why: 그 기사가 오늘 투자자에게 왜 중요한지 한 문장 — 제목을 되풀이하지 말고, 그 결과 다음에 무엇이(어떤 업종·종목·지표가)
+  어떤 영향을 받을 수 있는지를 씁니다. "실적은 주가에 중요합니다", "투자 심리에 영향을 줄 수 있습니다" 같은 일반론은 금지입니다.
 """
 
 _SECTION_GUIDE = {
@@ -405,8 +407,12 @@ def context_text(ctx: dict) -> str:
 
     cal = ctx.get("calendar") or []
     if cal:
-        L.append("\n[예정된 실적 발표]")
+        L.append("\n[예정된 실적 발표] 오늘")
         L.extend(f"- {c['title']} · {c['time']}" for c in cal)
+    upcoming = ctx.get("upcoming") or []
+    if upcoming:
+        L.append("\n[다가오는 실적 발표] 앞으로 일주일")
+        L.extend(f"- {u['date'][5:]} {u['name']}({u['code']}) · {u['when']}" for u in upcoming)
 
     prev = ctx.get("prev") or {}
     if prev.get("threeLines"):
@@ -593,6 +599,28 @@ def _top_news(n: dict, *, why: str | None = None, title_ko: str | None = None) -
                     for t in n.get("tickers", [])[:3]],
         "importance": n.get("importance"),
     }
+
+
+def _upcoming(market: str, session_date) -> list[dict]:
+    """해설의 "앞으로 볼 것"에 넘길 다음 일주일 실적 일정 (오늘 것은 `calendar` 에 있다).
+
+    오늘 일정만 주면 연결 종목 발표가 없는 날 모델이 "AI 기업 실적에 주목" 같은 막연한
+    문장밖에 못 쓴다 (2026-10-15 리허설에서 그랬다). 국장은 한국 연결 종목, 미장은
+    시가총액 상위만 넘긴다. 실패해도 해설은 나간다.
+    """
+    if not CALENDAR_EARNINGS:
+        return []
+    try:
+        items = calendar_mod.fetch_earnings(session_date + timedelta(days=1), days=7)
+    except Exception as exc:
+        log.warn(f"upcoming earnings skipped: {exc}")
+        return []
+    if market == "KR":
+        items = [i for i in items if i["code"] in KR_LINKED_US]
+    else:
+        items = [i for i in items if (i["marcap"] or 0) >= 100_000_000_000]
+    return [{"date": i["date"], "code": i["code"], "name": i["name"], "when": i["when"]}
+            for i in items[:8]]
 
 
 def _calendar(market: str, session_date, tickers: list[dict] | None = None) -> list[dict]:

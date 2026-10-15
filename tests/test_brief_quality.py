@@ -266,8 +266,11 @@ def test_context_carries_flows_wrap_and_yesterdays_points():
            "movers": [], "wrap": [{"title": "코스피 7일째 추락", "source": "뉴스1",
                                   "publishedAt": "2026-10-15T08:48:00Z"}],
            "candidates": _cands(2), "calendar": [],
+           "upcoming": [{"date": "2026-10-21", "code": "TSLA", "name": "Tesla, Inc.",
+                         "when": "장 마감 후"}],
            "prev": {"date": "2026-10-15", "threeLines": ["어제 말한 것"]}}
     text = brief.context_text(ctx)
+    assert "10-21 Tesla, Inc.(TSLA) · 장 마감 후" in text, "'앞으로 볼 것'이 구체적인 일정을 쓸 재료"
     assert "외국인 -3조 7,637억" in text
     assert "코스피 7일째 추락" in text
     assert "어제 말한 것" in text and "반복 금지" in text
