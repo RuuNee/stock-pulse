@@ -533,7 +533,7 @@ TIER2_RECENT_NEWS = 5
 # 말해 줄 수 있는 몇 안 되는 정보다.
 CALENDAR_EARNINGS = True
 CALENDAR_DAYS_AHEAD = 2        # 오늘 + 내일. 국장 브리핑이 "오늘 밤 미국" 을 봐야 한다
-CALENDAR_MAX_ITEMS = 5         # 브리핑에 싣는 최대 건수
+CALENDAR_MAX_ITEMS = 3         # 브리핑에 싣는 최대 건수 (2026-10-15 5 → 3, 시총순)
 CALENDAR_MIN_MARCAP = 5_000_000_000   # 시총 50억 달러 미만은 브리핑에서 뺀다
 NASDAQ_EARNINGS_URL = "https://api.nasdaq.com/api/calendar/earnings?date={date}"
 # 이 엔드포인트는 프로젝트 기본 USER_AGENT 를 무시한다 (실측 25초 타임아웃).

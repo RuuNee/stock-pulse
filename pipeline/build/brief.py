@@ -21,6 +21,7 @@ LLM 이 없거나 실패해도 브리핑은 나간다 — 규칙 요약 + 규칙
 from __future__ import annotations
 
 import math
+import re
 from datetime import date, datetime, timedelta
 
 from ..analyze import curate, llm, mood
@@ -273,6 +274,7 @@ _INSTRUCT = """당신은 한국 개인투자자에게 매일 시장 브리핑을
 - 원인은 근거와 함께 씁니다("시황 기사들은 ~를 원인으로 꼽습니다", "~라는 분석이 나옵니다"). 근거가 약하면 단정하지 마세요.
 - 쉬운 존댓말. 전문용어는 처음 나올 때 괄호로 짧게 풀이합니다. 예: 서킷브레이커(지수가 8% 넘게 빠지면 20분간 거래를 멈추는 장치)
 - 매수·매도 권유, 목표가, "지금 사라/팔아라" 같은 문장은 금지입니다. 전망은 조건을 단 시나리오로 씁니다.
+- 자료의 꺾쇠 제목([지표], [후보 기사] 등)을 본문에 쓰지 마세요. 독자는 자료를 보지 못합니다.{note}
 - [오늘 장 전망 점수]와 반대되는 분위기로 쓰지 마세요.
 
 JSON 하나로만 답하세요:
@@ -306,6 +308,14 @@ news — 주요 뉴스 {n}개
   어떤 영향을 받을 수 있는지를 씁니다. "실적은 주가에 중요합니다", "투자 심리에 영향을 줄 수 있습니다" 같은 일반론은 금지입니다.
 """
 
+# 미장 브리핑은 한국 시간 밤에 나간다. 리허설에서 "오늘 국내 기술주에 부담"이라고
+# 썼는데, 그 시각엔 그날 국장이 이미 끝났다.
+_MARKET_NOTE = {
+    "KR": "",
+    "US": ("\n- 이 브리핑은 한국 시간 밤, 미국장 개장 전에 나갑니다. 그날 국장은 이미 끝났으니 "
+           "한국 증시 영향은 '내일 국장'으로 쓰세요. 아시아 증시가 크게 움직였다면 원인과 함께 짚으세요."),
+}
+
 _SECTION_GUIDE = {
     "KR": ("지수가 얼마나, 왜 움직였는지. 수급(외국인·기관·개인)과 주도 업종·종목을 근거로.",
            "미국 증시에서 무슨 일이 있었고 오늘 한국 시장에 어떤 의미인지 (반도체·AI·금리·환율 경로로)."),
@@ -322,7 +332,7 @@ def _commentary(ctx: dict):
     s = _SECTIONS[market]
     g = _SECTION_GUIDE[market]
     prompt = (_INSTRUCT.format(s0=s[0], s1=s[1], s2=s[2], s3=s[3], d0=g[0], d1=g[1],
-                               n=BRIEF_NEWS_TOTAL)
+                               n=BRIEF_NEWS_TOTAL, note=_MARKET_NOTE[market])
               + "\n[자료]\n" + context_text(ctx))
     data = llm.brief_analysis(prompt)
     if not data:
@@ -646,15 +656,29 @@ def _calendar(market: str, session_date, tickers: list[dict] | None = None) -> l
     if market == "KR":
         items = [i for i in items if i["code"] in KR_LINKED_US]
     same_day = [i for i in items if i["date"] == session_date.isoformat()]
-    picked = (same_day or items)[:CALENDAR_MAX_ITEMS if market == "US" else 3]
+    picked = (same_day or items)[:CALENDAR_MAX_ITEMS]
     return [{
         "time": i["when"],
-        "title": f"{i['name']} ({i['code']}) 실적 발표",
+        "title": f"{short_name(i['name'])} ({i['code']}) 실적 발표",
         "code": i["code"],
         "market": i["market"],
         "epsForecast": i["epsForecast"],
         "importance": "high" if (i["marcap"] or 0) >= 100_000_000_000 else "normal",
     } for i in picked]
+
+
+_NAME_TAIL = re.compile(
+    r"(,?\s+(Inc\.?|Incorporated|Corporation|Corp\.?|Company|Co\.|Ltd\.?|Limited|plc|"
+    r"Holdings?|Group|N\.V\.|S\.A\.|AG|SE))+\s*$", re.IGNORECASE)
+
+
+def short_name(name: str) -> str:
+    """"Taiwan Semiconductor Manufacturing Company Ltd." → "Taiwan Semiconductor Manufacturing".
+
+    실적 캘린더 이름은 등기명이라 텔레그램 한 줄을 넘긴다. 앞의 "The " 와 법인 꼬리표만 뗀다.
+    """
+    s = re.sub(r"^The\s+", "", (name or "").strip())
+    return _NAME_TAIL.sub("", s).strip() or name
 
 
 def _chart_signals(market: str, tickers: list[dict]) -> dict:

@@ -120,7 +120,7 @@ def test_kr_brief_lists_only_korea_linked_earnings(monkeypatch):
 
     assert [c["code"] for c in brief._calendar("KR", date(2026, 10, 15))] == ["TSM"]
     # 미장 브리핑은 거르지 않는다.
-    assert len(brief._calendar("US", date(2026, 10, 15))) == 5
+    assert len(brief._calendar("US", date(2026, 10, 15))) == CALENDAR_MAX_ITEMS
 
     monkeypatch.setattr(calendar_mod, "fetch_earnings",
                         lambda *a, **k: [row("SCHW"), row("NVDA", "2026-10-16")])
