@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from ..config import GEMINI_BULK_MODEL, LLM_MAX_EVENTS_PER_RUN, LLM_RECENT_DAYS
+from ..config import GEMINI_BULK_MODELS, LLM_MAX_EVENTS_PER_RUN, LLM_RECENT_DAYS
 from ..util import log
 from ..util import text as T
 from . import llm
@@ -40,7 +40,7 @@ def enhance_globally(details: list[dict]) -> None:
     """Second pass: pick the most significant recent events across ALL tickers
     and have Gemini write the cause + confidence for them. Mutates in place,
     upgrading those events from rule → llm."""
-    if not llm.available(GEMINI_BULK_MODEL):
+    if not llm.available(GEMINI_BULK_MODELS):
         return
 
     # Collect candidates (recent + has news) with their owning ticker.

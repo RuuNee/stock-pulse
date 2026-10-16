@@ -19,7 +19,7 @@ from ..config import (
     EVENT_BACKFILL_MAX_AGE_DAYS,
     EVENT_BACKFILL_MAX_PER_TICKER,
     EVENT_NEWS_BACKFILL,
-    GEMINI_BULK_MODEL,
+    GEMINI_BULK_MODELS,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
     HISTORY_YEARS,
@@ -223,7 +223,7 @@ def _translate(strings: list[str]) -> None:
 def _translate_feed(market_news: list[dict]) -> None:
     """Priority pass: translate the top-importance US/GLOBAL feed items. Bounded
     to TRANSLATE_FEED_TOP so it fits the free-tier daily budget."""
-    if not (TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODEL)):
+    if not (TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODELS)):
         return
     feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
     feed.sort(key=lambda n: n.get("importance", 0), reverse=True)
@@ -249,7 +249,7 @@ def _translate_ticker_news(details: list[dict]) -> None:
             out.extend(e.get("news", []))
         return out
 
-    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODEL):
+    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODELS):
         titles = [n.get("title") for d in details for n in foreign(d)]
         _translate([t for t in titles if t])
     for d in details:

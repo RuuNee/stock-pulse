@@ -5,9 +5,10 @@ brief's market commentary (headline, 3 points, analysis, news picks),
 (3) auto-translating foreign (US) news to Korean.
 
 Free-tier quotas are per-minute and per-day **per model**, so bulk work (event
-summaries, translation) and the brief use different models — see
-`config.GEMINI_BULK_MODEL`. Each model keeps its own failure state: a dead bulk
-model must not take the brief down with it. Calls are batched and throttled,
+summaries, translation) and the brief use different model chains — see
+`config.GEMINI_BULK_MODELS` / `GEMINI_BRIEF_MODELS`. Each model keeps its own
+failure state and a call falls through to the next model in its chain; the
+bulk chain never borrows from the brief chain. Calls are batched and throttled,
 and every failure degrades gracefully (returns None → callers fall back to
 rules). Raw REST via requests — no SDK dependency.
 """
@@ -21,11 +22,11 @@ import requests
 
 from ..config import (
     GEMINI_BRIEF_MAX_TOKENS,
+    GEMINI_BRIEF_MODELS,
     GEMINI_BRIEF_THINKING,
-    GEMINI_BULK_MODEL,
+    GEMINI_BULK_MODELS,
     GEMINI_DELAY_SEC,
     GEMINI_MAX_TOKENS,
-    GEMINI_MODEL,
     LLM_ENABLED,
     LLM_EVENT_BATCH,
     LLM_MAX_EVENTS_PER_RUN,
@@ -44,9 +45,18 @@ _consec_429: dict[str, int] = {}  # per-model consecutive rate-limit hits
 _MAX_CONSEC_429 = 3  # after this many, give up on that model for the whole run
 
 
-def available(model: str | None = None) -> bool:
+def available(models: list[str] | str | None = None) -> bool:
+    """체인(`models`) 중 이번 실행에서 아직 살아 있는 모델이 하나라도 있나. 기본은 브리핑 체인."""
     return (LLM_ENABLED and gemini_key() is not None
-            and (model or GEMINI_MODEL) not in _disabled)
+            and any(m not in _disabled for m in _chain(models)))
+
+
+def _chain(models) -> list[str]:
+    if models is None:
+        return list(GEMINI_BRIEF_MODELS)
+    if isinstance(models, str):
+        return [models]
+    return list(models)
 
 
 def reset() -> None:
@@ -58,27 +68,54 @@ def reset() -> None:
     _consec_429.clear()
 
 
-def _post(prompt: str, *, model: str | None = None, max_tokens: int = GEMINI_MAX_TOKENS,
+def _post(prompt: str, *, models=None, max_tokens: int = GEMINI_MAX_TOKENS,
           thinking: int = 0, temperature: float = 0.3, retries: int = 2):
-    """One Gemini call. Returns parsed JSON (dict|list) or None."""
+    """체인의 모델을 앞에서부터 시도한다. Returns parsed JSON (dict|list) or None.
+
+    무료 쿼터는 모델별이라 한 모델이 바닥나도(429) 다음 모델은 산다. 모델이 사라지는
+    일도 실제로 있었다 — 2026-10-15 밤 `gemini-2.5-flash-lite` 가 "no longer available to
+    new users" 404 를 내서 이벤트 해설 60건이 전부 규칙 요약으로 내려갔다.
+    """
+    for model in _chain(models):
+        if model in _disabled:
+            continue
+        data = _post_one(prompt, model, max_tokens=max_tokens, thinking=thinking,
+                         temperature=temperature, retries=retries)
+        if data is not None:
+            return data
+    return None
+
+
+def _thinking(model: str, budget: int) -> dict:
+    """2.x 는 토큰 예산(`thinkingBudget`), 3.x 이후는 단계(`thinkingLevel`)로 받는다.
+
+    `gemini-3.5-flash-lite` 는 `thinkingBudget: 0` 을 400 으로 거절했다 (2026-10-16 실측).
+    """
+    if model.startswith("gemini-2."):
+        return {"thinkingBudget": budget}
+    if budget <= 0:
+        return {"thinkingLevel": "minimal"}
+    return {"thinkingLevel": "low" if budget <= 1024 else "medium"}
+
+
+def _post_one(prompt: str, model: str, *, max_tokens: int, thinking: int,
+              temperature: float, retries: int):
+    """모델 하나에 한 번. 실패하면 None — 모델을 죽일지는 실패 종류로 정한다."""
     global _calls
-    model = model or GEMINI_MODEL
     key = gemini_key()
-    if not key or model in _disabled:
+    if not key:
         return None
 
     url = _ENDPOINT.format(model=model)
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-            "responseMimeType": "application/json",
-            # 2.5 계열은 생각하는 모델이다. 대량 작업은 꺼서 빠르고 깨끗한 JSON 을
-            # 받고, 원인을 엮어 써야 하는 브리핑 해설에만 예산을 준다.
-            "thinkingConfig": {"thinkingBudget": thinking},
-        },
+    config = {
+        "temperature": temperature,
+        "maxOutputTokens": max_tokens,
+        "responseMimeType": "application/json",
+        # 생각하는 모델이다. 대량 작업은 최소로 줄여 빠르고 깨끗한 JSON 을 받고,
+        # 원인을 엮어 써야 하는 브리핑 해설에만 예산을 준다.
+        "thinkingConfig": _thinking(model, thinking),
     }
+    body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
 
     for attempt in range(retries + 1):
         time.sleep(GEMINI_DELAY_SEC)  # throttle to stay under free-tier RPM
@@ -93,15 +130,20 @@ def _post(prompt: str, *, model: str | None = None, max_tokens: int = GEMINI_MAX
             # 어느 쿼터(분당/일일)에 걸렸는지 남긴다. 예전 로그는 "429" 만 있어서
             # 브리핑이 왜 규칙 요약으로 나갔는지 나중에 알 수 없었다.
             log.warn(f"gemini[{model}] rate-limited (429): {_quota_hint(r)}")
-            if _consec_429[model] >= _MAX_CONSEC_429:
-                log.warn(f"gemini[{model}] quota exhausted (repeated 429) — disabling for this run")
+            if _consec_429[model] >= _MAX_CONSEC_429 or "PerDay" in _quota_hint(r):
+                log.warn(f"gemini[{model}] quota exhausted — disabling for this run")
                 _disabled.add(model)
                 return None
             time.sleep(6 * (attempt + 1))
             continue
+        if r.status_code == 400 and "thinkingConfig" in config:
+            # 모델마다 받는 생각 설정이 다르다. 설정을 빼고 한 번 더 — 그래도 400 이면 요청 문제다.
+            log.warn(f"gemini[{model}] 400 with thinkingConfig — retrying without it")
+            config.pop("thinkingConfig")
+            continue
         if r.status_code in (400, 403, 404):
             # bad key / model / request — don't retry, disable this model for the run
-            log.warn(f"gemini[{model}] {r.status_code}: {r.text[:160]} — disabling for this run")
+            log.warn(f"gemini[{model}] {r.status_code}: {r.text[:200]} — disabling for this run")
             _disabled.add(model)
             return None
         if r.status_code >= 500:
@@ -185,7 +227,7 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
     ``items``: [{id, name, code, market, date, changePct, volumeRatio, news:[title,...]}]
     """
     global _budget
-    if not available(GEMINI_BULK_MODEL) or _budget <= 0 or not items:
+    if not available(GEMINI_BULK_MODELS) or _budget <= 0 or not items:
         return {}
 
     allowed = items[:_budget]
@@ -204,7 +246,7 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
             )
         prompt = _EXPLAIN_INSTRUCT + "\n\n입력:\n" + "\n\n".join(blocks)
 
-        data = _post(prompt, model=GEMINI_BULK_MODEL)
+        data = _post(prompt, models=GEMINI_BULK_MODELS)
         rows = data if isinstance(data, list) else (data.get("items") if isinstance(data, dict) else None)
         if not rows:
             continue
@@ -227,9 +269,9 @@ def brief_analysis(prompt: str) -> dict | None:
     한 번의 호출로 끝내는 이유는 쿼터다 — 무료 등급은 모델별 하루 요청 수가 빠듯해서
     3줄·해설·뉴스 선택을 따로 부르면 그만큼 실패할 기회가 늘어난다.
     """
-    if not available(GEMINI_MODEL):
+    if not available(GEMINI_BRIEF_MODELS):
         return None
-    data = _post(prompt, model=GEMINI_MODEL, max_tokens=GEMINI_BRIEF_MAX_TOKENS,
+    data = _post(prompt, models=GEMINI_BRIEF_MODELS, max_tokens=GEMINI_BRIEF_MAX_TOKENS,
                  thinking=GEMINI_BRIEF_THINKING, temperature=0.4)
     return data if isinstance(data, dict) else None
 
@@ -240,7 +282,7 @@ def brief_analysis(prompt: str) -> dict | None:
 def translate(texts: list[str]) -> list[str]:
     """Translate a list of English strings to Korean. Returns same length;
     on any failure the original string is kept for that slot."""
-    if not available(GEMINI_BULK_MODEL) or not texts:
+    if not available(GEMINI_BULK_MODELS) or not texts:
         return list(texts)
 
     result = list(texts)
@@ -254,7 +296,7 @@ def translate(texts: list[str]) -> list[str]:
             'JSON 배열로만 답하세요: [{"i": 번호, "ko": "번역"}]\n\n'
             + numbered
         )
-        data = _post(prompt, model=GEMINI_BULK_MODEL)
+        data = _post(prompt, models=GEMINI_BULK_MODELS)
         rows = data if isinstance(data, list) else None
         if not rows:
             continue

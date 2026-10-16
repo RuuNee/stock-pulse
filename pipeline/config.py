@@ -741,8 +741,20 @@ NEGATIVE_WORDS_EN = ["plunge", "slump", "miss", "drop", "fall", "downgrade", "we
 # 하나를 나눠 써서, 브리핑 차례가 왔을 때 쿼터가 바닥난 날이 있었다 — 2026-10-14
 # 국장 브리핑이 429 로 규칙 요약("간밤 S&P 500가 0.02% 내렸습니다")으로 나갔다.
 # 대량 작업은 Flash-Lite 로 옮기고, Flash 쿼터는 하루 2~3번인 브리핑 해설에 남겨 둔다.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")              # 브리핑 해설
-GEMINI_BULK_MODEL = os.getenv("GEMINI_BULK_MODEL", "gemini-2.5-flash-lite")  # 이벤트 해설·번역
+#
+# 2026-10-16: 모델 하나가 아니라 **체인**이다. 앞 모델이 사라지거나(404) 그날 쿼터가
+# 바닥나면(429) 다음 모델로 넘어간다. 실제로 10-15 밤 `gemini-2.5-flash-lite` 가
+# "no longer available to new users" 404 를 냈다. 대량 체인은 브리핑 체인을 빌리지 않는다.
+# 3.x 는 `thinkingBudget: 0` 대신 `thinkingLevel` 을 받는다 (analyze/llm.py `_thinking`).
+def _models(env: str, default: list[str]) -> list[str]:
+    first = os.getenv(env)
+    return ([first] + [m for m in default if m != first]) if first else list(default)
+
+
+GEMINI_BRIEF_MODELS = _models("GEMINI_MODEL", ["gemini-2.5-flash", "gemini-3.5-flash"])
+GEMINI_BULK_MODELS = _models("GEMINI_BULK_MODEL", ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"])
+GEMINI_MODEL = GEMINI_BRIEF_MODELS[0]          # 브리핑 해설 (대표 이름 — 문서·로그용)
+GEMINI_BULK_MODEL = GEMINI_BULK_MODELS[0]      # 이벤트 해설·번역
 GEMINI_MAX_TOKENS = 2048
 # 브리핑 해설은 원인을 엮어 쓰는 글이라 생각(thinking) 예산을 준다. 출력 토큰 한도에
 # 생각 토큰이 같이 잡히므로 한도도 넉넉히 둔다.

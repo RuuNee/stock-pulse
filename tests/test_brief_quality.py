@@ -381,21 +381,87 @@ class _Resp:
         return self._payload
 
 
-def test_dead_bulk_model_does_not_disable_the_brief_model(monkeypatch):
-    """대량 작업 모델이 404 여도 브리핑 모델은 살아 있어야 한다."""
+def _uses(url: str, model: str) -> bool:
+    return f"/models/{model}:" in url        # "3.5-flash" 는 "3.5-flash-lite" 의 앞부분이다
+
+
+def _llm_env(monkeypatch, post):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(llm, "GEMINI_DELAY_SEC", 0)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
-    ok = {"candidates": [{"content": {"parts": [{"text": '{"threeLines": ["a", "b"]}'}]}}]}
-
-    def post(url, **kw):
-        return _Resp(404) if llm.GEMINI_BULK_MODEL in url else _Resp(200, ok)
-
     monkeypatch.setattr(llm.requests, "post", post)
     llm.reset()
+
+
+_OK = {"candidates": [{"content": {"parts": [{"text": '{"threeLines": ["a", "b"]}'}]}}]}
+
+
+def test_dead_bulk_chain_does_not_disable_the_brief_chain(monkeypatch):
+    """대량 체인이 전부 404 여도 브리핑 체인은 살아 있어야 하고, 빌려 쓰지도 않는다."""
+    seen = []
+
+    def post(url, **kw):
+        seen.append(url)
+        bulk = any(_uses(url, m) for m in llm.GEMINI_BULK_MODELS)
+        return _Resp(404) if bulk else _Resp(200, _OK)
+
+    _llm_env(monkeypatch, post)
     assert llm.explain_events([{"id": "e", "name": "n", "code": "c", "market": "KR",
                                 "date": "2026-10-15", "changePct": -7.0}]) == {}
-    assert not llm.available(llm.GEMINI_BULK_MODEL)
-    assert llm.available(llm.GEMINI_MODEL)
+    assert not any(_uses(u, m) for u in seen for m in llm.GEMINI_BRIEF_MODELS), \
+        "대량 작업이 브리핑 모델 쿼터를 쓰면 안 된다"
+    assert not llm.available(llm.GEMINI_BULK_MODELS)
+    assert llm.available(llm.GEMINI_BRIEF_MODELS)
     assert llm.brief_analysis("p") == {"threeLines": ["a", "b"]}
     llm.reset()
+
+
+def test_retired_model_falls_through_to_the_next_in_chain(monkeypatch):
+    """2026-10-15 밤 실제 사고: 2.5-flash-lite 가 404 'no longer available to new users'."""
+    first, second = llm.GEMINI_BULK_MODELS[:2]
+
+    def post(url, **kw):
+        return _Resp(404) if _uses(url, first) else _Resp(200, _OK)
+
+    _llm_env(monkeypatch, post)
+    assert llm._post("p", models=llm.GEMINI_BULK_MODELS) == {"threeLines": ["a", "b"]}
+    assert not llm.available(first) and llm.available(second)
+    llm.reset()
+
+
+def test_daily_quota_moves_the_brief_to_its_backup_model(monkeypatch):
+    primary, backup = llm.GEMINI_BRIEF_MODELS[:2]
+    daily = {"error": {"details": [{"violations": [
+        {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "quotaValue": "20"}]}]}}
+    calls = []
+
+    def post(url, **kw):
+        calls.append(url)
+        return _Resp(429, daily) if _uses(url, primary) else _Resp(200, _OK)
+
+    _llm_env(monkeypatch, post)
+    assert llm.brief_analysis("p") == {"threeLines": ["a", "b"]}
+    assert sum(_uses(u, primary) for u in calls) == 1, "일일 한도면 같은 모델을 재시도하지 않는다"
+    assert any(_uses(u, backup) for u in calls)
+    llm.reset()
+
+
+def test_unsupported_thinking_config_is_retried_without_it(monkeypatch):
+    """`gemini-3.5-flash-lite` 는 `thinkingBudget: 0` 을 400 으로 거절했다."""
+    bodies = []
+
+    def post(url, json=None, **kw):
+        bodies.append(json["generationConfig"].copy())
+        return _Resp(400) if "thinkingConfig" in json["generationConfig"] else _Resp(200, _OK)
+
+    _llm_env(monkeypatch, post)
+    assert llm._post("p", models=["gemini-x"]) == {"threeLines": ["a", "b"]}
+    assert "thinkingConfig" in bodies[0] and "thinkingConfig" not in bodies[-1]
+    assert llm.available("gemini-x")
+    llm.reset()
+
+
+def test_thinking_config_matches_model_generation():
+    assert llm._thinking("gemini-2.5-flash", 0) == {"thinkingBudget": 0}
+    assert llm._thinking("gemini-3.5-flash-lite", 0) == {"thinkingLevel": "minimal"}
+    assert llm._thinking("gemini-3.5-flash", 2048) == {"thinkingLevel": "medium"}
