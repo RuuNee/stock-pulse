@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.config import BRIEF_LATE_CUTOFF, BRIEF_WINDOW
+from pipeline.config import BRIEF_LATE_CUTOFF, BRIEF_WINDOW, CLOSE_BRIEF_WINDOW
 
 WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
@@ -70,6 +70,20 @@ def test_kr_absorbs_observed_delays(delay):
 
 def test_kr_covers_every_delay_up_to_4h():
     assert_full_coverage(slots_utc("brief-kr.yml"), window_utc("KR", UTC_OFFSET["KR"]), "brief-kr")
+
+
+def test_close_brief_covers_every_delay_up_to_4h():
+    """장 마감 브리핑 — 첫 슬롯이 240분 밀려도 마감 브리핑 창(15:40~20:30 KST) 안이어야 한다."""
+    start, end = CLOSE_BRIEF_WINDOW["KR"]
+    shift = UTC_OFFSET["KR"] * 60
+    window = ((_minutes(start) - shift) % DAY, (_minutes(end) - shift) % DAY)
+    assert_full_coverage(slots_utc("brief-kr-close.yml"), window, "brief-kr-close")
+
+
+def test_close_brief_never_wakes_before_the_close():
+    """15:30 마감 전에 깨어난 슬롯은 장중 값으로 판정한다 — 게이트가 막지만 슬롯부터 뒤에 둔다."""
+    first = min(slots_utc("brief-kr-close.yml")) + UTC_OFFSET["KR"] * 60
+    assert first >= _minutes(CLOSE_BRIEF_WINDOW["KR"][0])
 
 
 @pytest.mark.parametrize("season", ["US-EDT", "US-EST"])

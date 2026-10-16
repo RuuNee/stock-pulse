@@ -261,6 +261,8 @@ export interface ChartSignals {
 
 export interface Brief {
   market: Market;
+  /** "close" = 국장 마감 브리핑(큰 변동일 전용). 없으면 장전 브리핑 */
+  kind?: "close";
   date: string;
   generatedAt: string;
   /** 발송 창을 놓쳐 개장 뒤에 만들어진 브리핑. 예전 파일에는 이 필드가 없다. */
@@ -293,6 +295,8 @@ export interface Brief {
     tickers: { code: string; name: string }[];
     importance?: number;
   }[];
+  /** 마감 브리핑 전용 — 코스피 시가총액 상위 종목의 오늘 등락 */
+  leaders?: { code: string; name: string; close: number | null; changePct: number; date: string }[];
   /** 해설이 없을 때 "왜"의 실마리로 보여 주는 시황 기사 제목 */
   wrapHeadlines?: { title: string; url: string; source?: string }[];
   chartSignals?: ChartSignals | null;

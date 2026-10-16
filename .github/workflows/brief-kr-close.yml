@@ -1,0 +1,107 @@
+name: brief-kr-close
+
+# 국장 마감 브리핑 — 코스피가 ±2% 넘게 움직인 날에만 보낸다 (2026-10-16 사용자 결정).
+#
+# ── 왜 ─────────────────────────────────────────────────────────────
+# 장전 브리핑(brief-kr.yml)은 07:45~08:40 KST 에 나가서 그날 장중 급락의 이유는
+# 다음 날 아침에야 설명됐다. 2026-10-15 코스피 -7.6% 날 "급락 이유가 뉴스에 없다"는
+# 신고가 그것이었다. 매일 보내면 하루 세 통이 되어 소음이므로 큰 변동일만 보낸다.
+#
+# ── 어떻게 ─────────────────────────────────────────────────────────
+# brief-kr.yml 과 같은 패턴이다. 마감(15:30) 뒤로 슬롯을 여러 개 깔고, 깨어난 슬롯마다
+# `close-gate` 가 휴장일·중복·시각 창(config.CLOSE_BRIEF_WINDOW 15:40~20:30)과 코스피
+# 등락 폭을 본다. 등락 폭은 네이버 마감값으로 판정한다 — FinanceDataReader 는 마감 직후
+# 잠정값을 준 적이 있다 (10-15: 5,535 vs 공식 5,554). 게이트는 표준 라이브러리만 써서
+# pip install 전에 끝난다. 변동이 작은 날은 슬롯마다 15초짜리로 끝난다.
+#
+# 창이 넉넉한 이유: GitHub 스케줄러가 최대 3~4시간 밀린다. 첫 슬롯(15:45)이 240분
+# 밀려도 19:45 라 창 안이다 (tests/test_schedule.py 가 커버리지를 고정한다).
+# 창을 다 놓친 날은 다음 날 아침 브리핑의 "어제 국장"이 설명한다.
+on:
+  schedule:
+    - cron: "45 6 * * 1-5"    # 15:45 KST
+    - cron: "10 7 * * 1-5"    # 16:10 KST
+    - cron: "40 7 * * 1-5"    # 16:40 KST
+    - cron: "10 8 * * 1-5"    # 17:10 KST
+    - cron: "45 8 * * 1-5"    # 17:45 KST
+    - cron: "30 9 * * 1-5"    # 18:30 KST
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "텔레그램으로 실제 발송 (끄면 리허설 — 빌드·렌더링만 확인하고 발송도 커밋도 안 함)"
+        type: boolean
+        default: true
+      force:
+        description: "게이트 무시하고 즉시 발송 (변동 폭이 작은 날에도 만든다)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: stock-pulse-brief-KR-close   # 장전 브리핑·데이터 잡과 분리
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 중복 판정도 커밋도 최신
+      # main 기준이어야 하므로 명시적으로 main 을 받는다.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Gate — 오늘 마감 브리핑을 보낼 날인지
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          SEND_INPUT: ${{ inputs.send }}    # 스케줄 실행에서는 빈 문자열
+          FORCE_INPUT: ${{ inputs.force }}  # 〃
+        run: |
+          set -euo pipefail
+          args="--market KR"
+          send="--send"
+          if [ "$EVENT" != "schedule" ]; then
+            if [ "${FORCE_INPUT:-true}" != "false" ]; then
+              args="$args --force"
+            fi
+            if [ "${SEND_INPUT:-true}" = "false" ]; then
+              send=""   # 리허설 — 발송도 커밋도 하지 않는다
+              echo "리허설 모드: 빌드·렌더링만 확인합니다"
+            fi
+          fi
+          gate=$(python3 -m pipeline.run close-gate $args)
+          {
+            echo "run=$(printf '%s\n' "$gate" | sed -n 1p)"
+            echo "send=$send"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+        if: steps.gate.outputs.run == 'true'
+
+      - name: 경량 갱신 (매크로·환율·뉴스)
+        if: steps.gate.outputs.run == 'true'
+        run: python -m pipeline.run pulse --market KR
+
+      - name: 마감 브리핑 생성 + 텔레그램 발송
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: python -m pipeline.run brief --market KR --kind close ${{ steps.gate.outputs.send }}
+
+      # 발송이 실패하면 여기까지 오지 않는다 → 마감 브리핑 파일이 커밋되지 않고,
+      # 남은 슬롯이 다시 시도한다. 리허설에서도 커밋하지 않는다.
+      - name: 마감 브리핑 + 갱신된 데이터 커밋
+        if: steps.gate.outputs.run == 'true' && steps.gate.outputs.send != ''
+        run: |
+          bash .github/scripts/commit-data.sh "chore(brief): KR close $(TZ=Asia/Seoul date +'%Y-%m-%d')"

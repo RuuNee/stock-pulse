@@ -46,4 +46,6 @@ export const api = {
   news: () =>
     get<{ items: NewsItem[] }>("news/latest.json", "news").then((d) => d.items),
   brief: (market: Market) => get<Brief>(`brief/latest-${market}.json`, `brief:${market}`),
+  /** 국장 마감 브리핑 — 코스피가 ±2% 넘게 움직인 날에만 만들어진다 */
+  closeBrief: () => get<Brief>("brief/latest-KR-close.json", "brief:KR-close"),
 };

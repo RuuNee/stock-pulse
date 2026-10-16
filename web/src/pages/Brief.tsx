@@ -9,9 +9,14 @@ import { fmtDateKr } from "../lib/format";
 import { toneOf, verdictColor } from "../lib/signals";
 import type { Brief as BriefT, ChartSignals, Market, SignalRef } from "../lib/types";
 
+type Tab = Market | "KR-close";
+
 export default function Brief() {
-  const [market, setMarket] = useState<Market>("KR");
-  const { data, loading, error } = useAsync(() => api.brief(market), [market]);
+  const [tab, setTab] = useState<Tab>("KR");
+  const close = tab === "KR-close";
+  const market: Market = close ? "KR" : (tab as Market);
+  const { data, loading, error } = useAsync(
+    () => (close ? api.closeBrief() : api.brief(market)), [tab]);
   // 브리핑과 따로 받는다 — manifest 를 못 읽어도 브리핑은 그대로 보여야 한다.
   const { data: manifest } = useAsync(() => api.manifest(), []);
 
@@ -20,22 +25,26 @@ export default function Brief() {
   const expected = manifest?.markets?.[market]?.briefDate;
   // 문자열 비교로 충분하다 (YYYY-MM-DD). manifest 쪽이 더 오래됐을 땐 알리지 않는다 —
   // 헛경보가 침묵보다 나쁘다.
-  const staleFor = data && expected && data.date < expected ? expected : null;
+  // 마감 브리핑은 큰 변동일에만 있으니 "준비 중" 판정을 하지 않는다.
+  const staleFor = !close && data && expected && data.date < expected ? expected : null;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">장전 브리핑</h1>
+        <h1 className="text-2xl font-bold">{close ? "장 마감 브리핑" : "장전 브리핑"}</h1>
         <div className="flex gap-1.5">
-          <button className={`chip ${market === "KR" ? "active" : ""}`} onClick={() => setMarket("KR")}>국장</button>
-          <button className={`chip ${market === "US" ? "active" : ""}`} onClick={() => setMarket("US")}>미장</button>
+          <button className={`chip ${tab === "KR" ? "active" : ""}`} onClick={() => setTab("KR")}>국장</button>
+          <button className={`chip ${tab === "US" ? "active" : ""}`} onClick={() => setTab("US")}>미장</button>
+          <button className={`chip ${close ? "active" : ""}`} onClick={() => setTab("KR-close")}>국장 마감</button>
         </div>
       </div>
 
       {loading && <div className="skeleton" style={{ height: 320 }} />}
       {error && (
         <div className="card p-8 text-center text-sm" style={{ color: "var(--muted)" }}>
-          아직 브리핑이 생성되지 않았습니다. 매일 장 시작 전에 자동으로 만들어집니다.
+          {close
+            ? "아직 장 마감 브리핑이 없습니다. 코스피가 ±2% 넘게 움직인 날, 장 마감(15:30) 뒤에 만들어집니다."
+            : "아직 브리핑이 생성되지 않았습니다. 매일 장 시작 전에 자동으로 만들어집니다."}
         </div>
       )}
       {staleFor && <StaleNotice expected={staleFor} />}
@@ -87,7 +96,10 @@ function BriefBody({ brief }: { brief: BriefT }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="card p-4">
-        <div className="text-sm" style={{ color: "var(--muted)" }}>{fmtDateKr(brief.date)}</div>
+        <div className="text-sm" style={{ color: "var(--muted)" }}>
+          {fmtDateKr(brief.date)}
+          {brief.kind === "close" && " · 15:30 마감 · 코스피가 ±2% 넘게 움직인 날에만 만들어집니다"}
+        </div>
         {brief.mood.label && (
           <div className="text-lg font-bold mt-1">{dot} {moodTitle}: {brief.mood.label} ({brief.mood.score}점)</div>
         )}
@@ -140,6 +152,11 @@ function BriefBody({ brief }: { brief: BriefT }) {
               </div>
             ))}
           </div>
+          {(brief.leaders?.length ?? 0) > 0 && (
+            <p className="mt-2.5 pt-2 border-t text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+              시총 상위 · {brief.leaders!.map((r) => `${r.name} ${r.changePct >= 0 ? "+" : ""}${r.changePct.toFixed(1)}%`).join(" · ")}
+            </p>
+          )}
           {brief.flows?.KOSPI && (
             <p className="mt-2.5 pt-2 border-t text-xs leading-relaxed" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
               수급(코스피 {brief.flows.KOSPI.date.slice(5)}) · 외국인 {eok(brief.flows.KOSPI.foreign)} · 기관{" "}

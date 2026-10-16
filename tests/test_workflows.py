@@ -17,6 +17,8 @@ WORKFLOW_DIR = GITHUB / "workflows"
 SCRIPT_DIR = GITHUB / "scripts"
 WORKFLOWS = sorted(WORKFLOW_DIR.glob("*.yml"))
 BRIEFS = ["brief-kr.yml", "brief-us.yml"]
+# 장 마감 브리핑(큰 변동일 전용)도 발송 경로라 같은 안전장치가 필요하다. 지각 표시는 없다.
+SENDERS = BRIEFS + ["brief-kr-close.yml"]
 
 
 def load(path: Path) -> dict:
@@ -36,7 +38,8 @@ def run_lines(data: dict) -> list[str]:
 
 def test_expected_workflows_present():
     names = {p.name for p in WORKFLOWS}
-    assert {"brief-kr.yml", "brief-us.yml", "data-sync.yml", "pulse.yml"} <= names
+    assert {"brief-kr.yml", "brief-us.yml", "brief-kr-close.yml", "data-sync.yml",
+            "pulse.yml"} <= names
 
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
@@ -55,14 +58,14 @@ def test_referenced_scripts_exist(path):
                     f"{path.name}: {token} 가 없습니다"
 
 
-@pytest.mark.parametrize("name", BRIEFS)
+@pytest.mark.parametrize("name", SENDERS)
 def test_brief_does_not_rebuild(name):
     """브리핑 발송 경로에 전체 재빌드가 다시 들어오면 Actions 무료 한도를 넘긴다(스펙 §12)."""
     commands = run_lines(load(WORKFLOW_DIR / name))
     assert not [c for c in commands if "--rebuild" in c]
 
 
-@pytest.mark.parametrize("name", BRIEFS)
+@pytest.mark.parametrize("name", SENDERS)
 def test_rehearsal_never_commits(name):
     """리허설(`send=false` dispatch)이 브리핑 파일을 커밋하면 중복 게이트가 그날
     진짜 발송을 막는다 — 고치려던 사고를 손으로 재현하는 꼴이 된다."""
@@ -74,7 +77,7 @@ def test_rehearsal_never_commits(name):
             f"{name}: 커밋 스텝이 발송 여부로 가드되지 않습니다"
 
 
-@pytest.mark.parametrize("name", BRIEFS)
+@pytest.mark.parametrize("name", SENDERS)
 def test_scheduled_run_always_sends(name):
     """스케줄 실행에서 `--send` 가 빠지면 브리핑이 조용히 안 나간다."""
     gate = [s for s in load(WORKFLOW_DIR / name)["jobs"]["brief"]["steps"]
@@ -96,7 +99,7 @@ def test_late_flag_reaches_the_brief_command(name):
             f"{name}: 발송 명령에 지각 플래그가 전달되지 않습니다"
 
 
-@pytest.mark.parametrize("name", BRIEFS)
+@pytest.mark.parametrize("name", SENDERS)
 def test_dispatch_can_run_under_the_gate(name):
     """외부 스케줄러(cron-job.org)가 부르는 경로. `force=false` 로 왔을 때
     `--force` 가 그대로 붙으면 휴장일에도 브리핑이 나간다."""
@@ -110,11 +113,22 @@ def test_dispatch_can_run_under_the_gate(name):
         f"{name}: force=false 가 --force 를 막지 않습니다"
 
 
-@pytest.mark.parametrize("name", BRIEFS)
+@pytest.mark.parametrize("name", SENDERS)
 def test_brief_has_own_concurrency_group(name):
     """data-sync(26분) 뒤에 큐잉되면 발송 창을 통째로 놓친다."""
     group = load(WORKFLOW_DIR / name)["concurrency"]["group"]
     assert group != "stock-pulse-data", f"{name}: 데이터 잡과 그룹을 공유하면 안 됩니다"
+    others = {load(WORKFLOW_DIR / n)["concurrency"]["group"] for n in SENDERS if n != name}
+    assert group not in others, f"{name}: 다른 브리핑과 그룹을 공유하면 서로 밀어낸다"
+
+
+def test_close_workflow_uses_close_gate_and_kind():
+    """마감 브리핑 워크플로가 장전 게이트·장전 빌더를 부르면 매일 아침 브리핑이 한 통 더 나간다."""
+    data = load(WORKFLOW_DIR / "brief-kr-close.yml")
+    gate = [s for s in data["jobs"]["brief"]["steps"] if s.get("id") == "gate"][0]
+    assert "pipeline.run close-gate" in gate["run"]
+    sends = [c for c in run_lines(data) if "pipeline.run brief" in c]
+    assert sends and all("--kind close" in c for c in sends)
 
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)

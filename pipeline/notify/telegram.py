@@ -43,7 +43,9 @@ def render(brief: dict) -> str:
     후보에서 고른다), 관심 종목 블록(사이트에만 남긴다). 차트 신호는 한 줄로 줄였다.
     """
     market = brief["market"]
-    label = "📈 국장 장전 브리핑" if market == "KR" else "🌙 미장 장전 브리핑"
+    close = brief.get("kind") == "close"
+    label = ("🔔 국장 마감 브리핑" if close else
+             "📈 국장 장전 브리핑" if market == "KR" else "🌙 미장 장전 브리핑")
     mood = brief.get("mood", {})
     dot = {"green": "🟢", "amber": "🟡", "red": "🔴"}.get(mood.get("color"), "⚪")
 
@@ -55,6 +57,15 @@ def render(brief: dict) -> str:
     if brief.get("late"):
         L.append("\n⏰ <b>늦은 브리핑</b> — 스케줄러 지연으로 개장 뒤에 도착했습니다. "
                  "이미 장이 열린 상태로 읽어 주세요.")
+    if close:
+        # 마감 브리핑은 점수 대신 오늘 지수가 첫 줄이다 — 그게 보낸 이유다.
+        idx = {s.get("key"): s for s in brief.get("marketSnapshot", [])}
+        parts = [f"{_e(name)} {idx[k]['value']:,.2f} {_arrow(idx[k].get('changePct'))}"
+                 for k, name in (("KS11", "코스피"), ("KQ11", "코스닥"))
+                 if k in idx and isinstance(idx[k].get("value"), (int, float))]
+        if parts:
+            L.append("\n" + " · ".join(parts))
+        L.append("<i>코스피가 ±2% 넘게 움직인 날에만 보내는 브리핑입니다.</i>")
     if mood.get("label"):
         # 예전 파일(kind 없음)은 전날 기준 분위기였다 — 같은 말로 부르지 않는다.
         title = "오늘 장 전망" if mood.get("kind") == "outlook" else "오늘 시장 분위기"
@@ -97,6 +108,11 @@ def render(brief: dict) -> str:
         if flows:
             L.append(f"수급(코스피 {flows['date'][5:]}): 외국인 {_eok(flows['foreign'])} · "
                      f"기관 {_eok(flows['institution'])} · 개인 {_eok(flows['individual'])}")
+        leaders = [r for r in brief.get("leaders") or [] if r.get("changePct") is not None]
+        if leaders:
+            L.append("시총 상위: " + " · ".join(
+                f"{_e(r['name'])} {_UP if r['changePct'] >= 0 else _DOWN}{r['changePct']:+.1f}%"
+                for r in leaders))
 
     news = brief.get("topNews", [])
     if news:
@@ -162,7 +178,7 @@ def _snapshot_line(s: dict) -> str:
 
 
 def _eok(value: int) -> str:
-    from ..collect.flows import eok_label
+    from ..collect.naver import eok_label
     return _e(eok_label(value))
 
 

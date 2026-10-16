@@ -20,7 +20,7 @@ import pytest
 from pipeline.analyze import curate, llm, mood
 from pipeline.build import brief
 from pipeline.build import site_data
-from pipeline.collect import flows
+from pipeline.collect import naver
 from pipeline.collect.macro import korea_overnight_gap, trend
 from pipeline.config import BRIEF_NEWS_TOTAL
 from pipeline.notify import telegram
@@ -252,7 +252,8 @@ def test_rule_summary_has_no_chart_count_or_boilerplate():
     assert len(lines) == 3
     joined = " ".join(lines)
     assert "차트" not in joined and "매수 우위" not in joined
-    assert "7.57%" in lines[0] and "3조 7,637억" in lines[0]
+    assert "7.57%" in lines[0] and "외국인은 3조 7,637억원어치를 순매도" in lines[0], \
+        "순매도 금액 앞에 '+' 가 붙으면 안 된다"
     assert "약세 우려" in headline
 
 
@@ -302,14 +303,14 @@ def test_news_window_starts_before_previous_brief():
 # --------------------------------------------------------------------------
 
 def test_flows_parse_and_label():
-    row = flows.parse({"bizdate": "20261015", "personalValue": "+13,967",
+    row = naver.parse_flows({"bizdate": "20261015", "personalValue": "+13,967",
                        "foreignValue": "-37,637", "institutionalValue": "+17,176"})
     assert row == {"date": "2026-10-15", "individual": 13967, "foreign": -37637,
                    "institution": 17176}
-    assert flows.eok_label(-37637) == "-3조 7,637억"
-    assert flows.eok_label(2228) == "+2,228억"
-    assert flows.eok_label(20000) == "+2조"
-    assert flows.parse({"bizdate": "x"}) is None
+    assert naver.eok_label(-37637) == "-3조 7,637억"
+    assert naver.eok_label(2228) == "+2,228억"
+    assert naver.eok_label(20000) == "+2조"
+    assert naver.parse_flows({"bizdate": "x"}) is None
 
 
 # --------------------------------------------------------------------------

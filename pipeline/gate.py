@@ -28,7 +28,10 @@ from pathlib import Path
 
 import json
 
-from .config import BRIEF_LATE_CUTOFF, BRIEF_WINDOW, DATA_DIR
+from .config import (
+    BRIEF_LATE_CUTOFF, BRIEF_WINDOW, CLOSE_BRIEF_ENABLED, CLOSE_BRIEF_MIN_MOVE,
+    CLOSE_BRIEF_WINDOW, DATA_DIR,
+)
 from .util.dates import (
     is_trading_day, next_session_date, now_et, now_kst, session_closed,
 )
@@ -141,6 +144,60 @@ def decide(market: str, *, force: bool = False, now: datetime | None = None,
     """(발송할지, 사람이 읽을 이유)를 돌려준다."""
     mode, reason = send_mode(market, force=force, now=now, data_dir=data_dir)
     return mode != SKIP, reason
+
+
+# --------------------------------------------------------------------------
+# 장 마감 브리핑 (config.CLOSE_BRIEF_*)
+# --------------------------------------------------------------------------
+def close_path(market: str, session: date, data_dir: Path | None = None) -> Path:
+    return (data_dir or DATA_DIR) / "brief" / f"{session.isoformat()}-{market}-close.json"
+
+
+def close_mode(market: str, *, force: bool = False, now: datetime | None = None,
+               data_dir: Path | None = None, index_move=None) -> tuple[str, str]:
+    """장 마감 브리핑을 지금 보낼지. (ON_TIME | SKIP, 이유).
+
+    판정 순서: 수동 실행 → 꺼짐 → 휴장일 → 이미 보냄 → 창 전/후 → 마감 확인 → 변동 폭.
+    `index_move` 는 테스트용 주입점이다 — 기본은 네이버에서 코스피 마감값을 받는다.
+    표준 라이브러리만 쓴다 (pip install 전에 판정한다).
+    """
+    market = market.upper()
+    if force:
+        return ON_TIME, "수동 실행 — 시각·중복·변동 폭 검사 생략"
+    if not CLOSE_BRIEF_ENABLED.get(market):
+        return SKIP, f"{market} 장 마감 브리핑은 꺼져 있습니다"
+
+    now = now or local_now(market)
+    today = now.date()
+    if not is_trading_day(market, today):
+        return SKIP, f"{today} 휴장일 — 마감 브리핑 없음"
+    path = close_path(market, today, data_dir)
+    if path.exists():
+        return SKIP, f"{path.name} 이미 있음 — 중복 발송 방지"
+
+    start, end = (_hhmm(t) for t in CLOSE_BRIEF_WINDOW[market])
+    label = now.strftime("%H:%M")
+    span = f"{start.strftime('%H:%M')}~{end.strftime('%H:%M')}"
+    if now.time() < start:
+        return SKIP, f"현재 {label} — 마감 브리핑 창({span}) 전"
+    if now.time() > end:
+        return SKIP, f"현재 {label} — 마감 브리핑 창({span})이 지났습니다. 내일 아침 브리핑이 설명합니다"
+
+    move = index_move() if index_move else _kospi_today(today)
+    if move is None:
+        return SKIP, "코스피 오늘 마감값을 아직 확인하지 못했습니다 — 다음 슬롯이 다시 봅니다"
+    if abs(move) < CLOSE_BRIEF_MIN_MOVE:
+        return SKIP, f"코스피 {move:+.2f}% — ±{CLOSE_BRIEF_MIN_MOVE:g}% 미만이라 마감 브리핑 생략"
+    return ON_TIME, f"코스피 {move:+.2f}% — 큰 변동일, 마감 브리핑을 보냅니다"
+
+
+def _kospi_today(today: date) -> float | None:
+    """오늘 마감이 확정된 코스피 등락률. 장중이거나 다른 날 값이면 None."""
+    from .collect.naver import fetch_kr_indices      # 지연 import — 게이트 기본 경로를 가볍게
+    row = (fetch_kr_indices() or {}).get("KOSPI")
+    if not row or not row.get("closed") or row.get("date") != today.isoformat():
+        return None
+    return row.get("changePct")
 
 
 def next_send(market: str, now: datetime | None = None,

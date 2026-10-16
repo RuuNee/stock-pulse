@@ -8,6 +8,8 @@
     python -m pipeline.run gate --market KR    # true/false: send the brief now?
     python -m pipeline.run brief --market KR --dry-run
     python -m pipeline.run brief --market KR --send
+    python -m pipeline.run brief --market KR --kind close --send   # 장 마감 브리핑
+    python -m pipeline.run close-gate --market KR   # true/false: 마감 브리핑을 지금 보낼까?
     python -m pipeline.run telegram-whoami [--token ...]
 """
 
@@ -61,12 +63,16 @@ def _cmd_brief(args) -> int:
     from .build import brief as brief_mod
     from .build import site_data
     from .notify import telegram
-    from .util.dates import is_trading_day, next_session_date
+    from .util.dates import is_trading_day, next_session_date, now_kst
 
+    close = args.kind == "close"
     markets = _markets(args.market)
     failed = []
     for market in markets:
-        session = next_session_date(market)
+        if close and market != "KR":
+            log.info(f"{market}: 장 마감 브리핑은 국장만 있습니다 — 생략")
+            continue
+        session = now_kst().date() if close else next_session_date(market)
         if not is_trading_day(market, session):
             log.info(f"{market}: {session} 휴장일 — 브리핑 생략")
             continue
@@ -79,7 +85,10 @@ def _cmd_brief(args) -> int:
                 log.warn(f"{market}: 데이터 없음 → 먼저 빌드합니다")
                 site = site_data.build((market,))
 
-        brief = brief_mod.build_brief(market, site, late=args.late)
+        if close:
+            brief = brief_mod.build_close_brief(market, site)
+        else:
+            brief = brief_mod.build_brief(market, site, late=args.late)
         brief_mod.write_brief(brief)
 
         message = telegram.render(brief)
@@ -110,6 +119,17 @@ def _cmd_gate(args) -> int:
     from .gate import SKIP, send_mode
 
     mode, reason = send_mode(args.market, force=args.force)
+    print(reason, file=sys.stderr)
+    print("true" if mode != SKIP else "false")
+    print(mode)
+    return 0
+
+
+def _cmd_close_gate(args) -> int:
+    """장 마감 브리핑 판정기. stdout 1행 = true/false, 2행 = 모드. 이유는 stderr 로."""
+    from .gate import SKIP, close_mode
+
+    mode, reason = close_mode(args.market, force=args.force)
     print(reason, file=sys.stderr)
     print("true" if mode != SKIP else "false")
     print(mode)
@@ -184,12 +204,20 @@ def main(argv=None) -> int:
     p_brief.add_argument("--rebuild", action="store_true", help="rebuild data before briefing")
     p_brief.add_argument("--late", action="store_true",
                          help="발송 창을 놓친 실행 — '늦은 브리핑'으로 표시해서 보낸다")
+    p_brief.add_argument("--kind", choices=("pre", "close"), default="pre",
+                         help="pre = 장전 브리핑(기본), close = 국장 마감 브리핑")
     p_brief.set_defaults(func=_cmd_brief)
 
     p_gate = sub.add_parser("gate", help="print true/false — should this slot send the brief?")
     p_gate.add_argument("--market", required=True, help="KR | US")
     p_gate.add_argument("--force", action="store_true", help="manual run — skip time/dup checks")
     p_gate.set_defaults(func=_cmd_gate)
+
+    p_cgate = sub.add_parser("close-gate",
+                             help="print true/false — 장 마감 브리핑을 지금 보내야 하나?")
+    p_cgate.add_argument("--market", required=True, help="KR")
+    p_cgate.add_argument("--force", action="store_true", help="manual run — skip checks")
+    p_cgate.set_defaults(func=_cmd_close_gate)
 
     p_sgate = sub.add_parser("sync-gate",
                              help="print true/false — 이 시장 데이터를 지금 다시 만들어야 하나?")
