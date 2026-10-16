@@ -238,3 +238,17 @@ def test_build_close_brief_end_to_end(monkeypatch, data_dir):
     assert "±2% 넘게 움직인 날에만" in msg
     assert "시총 상위: 삼성전자 🔵-11.5%" in msg
     assert "오늘 장 전망" not in msg and "차트 신호" not in msg
+
+
+def test_send_is_held_without_todays_close(monkeypatch, data_dir):
+    """게이트 뒤에 네이버가 실패하면 어제 지수가 '오늘 마감'으로 나갈 뻔한다 — 발송을 멈춘다."""
+    today = date(2026, 10, 15)
+    _stub_network(monkeypatch, today)
+    monkeypatch.setattr(brief.naver_mod, "fetch_kr_indices", lambda: None)
+    monkeypatch.setattr(brief, "DATA_DIR", data_dir)
+    site = {"overview": {"indices": [dict(STORED_KS11)]}, "tickers": [], "news": []}
+    b = brief.build_close_brief("KR", site)
+    assert not brief.close_confirmed(b)
+
+    _stub_network(monkeypatch, today)
+    assert brief.close_confirmed(brief.build_close_brief("KR", site))

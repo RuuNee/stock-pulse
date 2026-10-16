@@ -276,6 +276,12 @@ def build_close_brief(market: str, site: dict) -> dict:
     }
 
 
+def close_confirmed(brief: dict) -> bool:
+    """마감 브리핑의 코스피가 정말 그 세션 마감값인가 (발송 전 마지막 확인)."""
+    ks = next((s for s in brief.get("marketSnapshot") or [] if s.get("key") == "KS11"), None)
+    return bool(ks and ks.get("date") == brief.get("date"))
+
+
 def _with_today_close(indices: list[dict], naver: dict | None, session: date) -> list[dict]:
     """코스피·코스닥 항목을 네이버의 오늘 마감값으로 바꾼다. 추세(5일·52주)는 이어서 계산한다.
 

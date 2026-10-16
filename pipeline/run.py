@@ -87,6 +87,12 @@ def _cmd_brief(args) -> int:
 
         if close:
             brief = brief_mod.build_close_brief(market, site)
+            # 게이트가 마감을 확인한 뒤에도 브리핑 쪽에서 오늘 마감값을 못 받으면 어제 지수가
+            # "오늘 마감"으로 나간다. 실제 발송만 막는다 — 파일을 안 쓰면 다음 슬롯이 다시
+            # 시도하고, 리허설은 장중에도 모양을 볼 수 있어야 한다.
+            if args.send and not brief_mod.close_confirmed(brief):
+                log.warn(f"{market}: 오늘 코스피 마감값을 확인하지 못했습니다 — 발송하지 않고 다음 슬롯에 맡깁니다")
+                continue
         else:
             brief = brief_mod.build_brief(market, site, late=args.late)
         brief_mod.write_brief(brief)
