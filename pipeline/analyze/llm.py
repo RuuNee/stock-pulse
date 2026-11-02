@@ -300,7 +300,8 @@ def explain_events(items: list[dict]) -> dict[str, dict]:
         body = "입력:\n" + "\n\n".join(blocks)
 
         data = claude.ask_json(_EXPLAIN_INSTRUCT, body, _EVENTS_SCHEMA, model=CLAUDE_BULK_MODEL,
-                               effort=CLAUDE_BULK_EFFORT, max_tokens=CLAUDE_BULK_MAX_TOKENS)
+                               effort=CLAUDE_BULK_EFFORT, max_tokens=CLAUDE_BULK_MAX_TOKENS,
+                               fallback=True)
         if data is None and available(GEMINI_BULK_MODELS):
             data = _post(_EXPLAIN_INSTRUCT + "\n\n" + body, models=GEMINI_BULK_MODELS)
         rows = data if isinstance(data, list) else (data.get("items") if isinstance(data, dict) else None)
@@ -374,7 +375,7 @@ def translate(texts: list[str]) -> list[str]:
         numbered = "\n".join(f"{j}. {t}" for j, t in enumerate(batch))
         data = claude.ask_json(_TRANSLATE_INSTRUCT, numbered, _TRANSLATE_SCHEMA,
                                model=CLAUDE_BULK_MODEL, effort=CLAUDE_BULK_EFFORT,
-                               max_tokens=CLAUDE_BULK_MAX_TOKENS)
+                               max_tokens=CLAUDE_BULK_MAX_TOKENS, fallback=True)
         rows = (data or {}).get("items") if isinstance(data, dict) else None
         if not rows:
             continue

@@ -5,8 +5,8 @@ Gemini → 규칙으로 간다. 실패해도 예외를 밖으로 내지 않고 N
 
 * 응답은 JSON 스키마로 강제한다(`output_config.format`) — Gemini 경로처럼 코드펜스·잡음을
   걷어 낼 필요가 없다. 내용 검증(차트 신호 줄, 없는 후보 번호 등)은 그대로 build/brief.py 몫.
-* 브리핑 해설(Opus)은 거절(refusal)되면 서버가 다른 모델로 한 번 더 돌린다
-  (`fallbacks: "default"`). 그래도 거절이면 None → Gemini.
+* 거절(refusal)되면 서버가 다른 모델로 한 번 더 돌린다(`fallbacks: "default"`). Haiku 에는
+  없는 기능이라 Haiku 로 바꿔 두면 빼고 보낸다. 그래도 거절이면 None → Gemini.
 * `temperature` 는 보내지 않는다 — 2026-10-21 부터 모든 모델에서 400 이다.
 * 호출마다 토큰과 대략의 금액을 로그에 남긴다 (config.CLAUDE_PRICES).
 """
@@ -48,6 +48,11 @@ def _get_client():
     return _client
 
 
+def _has_fallback(model: str) -> bool:
+    """서버 측 거절 폴백은 Haiku 에 없다 — 대량 모델을 Haiku 로 되돌려도 400 이 안 나게 뺀다."""
+    return not model.startswith("claude-haiku")
+
+
 def ask_json(system: str, user: str, schema: dict, *, model: str, effort: str,
              max_tokens: int, fallback: bool = False):
     """한 번 묻고 스키마에 맞는 JSON(dict)을 돌려준다. 실패하면 None."""
@@ -64,7 +69,7 @@ def ask_json(system: str, user: str, schema: dict, *, model: str, effort: str,
                           "format": {"type": "json_schema", "schema": schema}},
     }
     try:
-        if fallback:
+        if fallback and _has_fallback(model):
             resp = _get_client().beta.messages.create(
                 betas=[_FALLBACK_BETA], fallbacks="default", **params)
         else:

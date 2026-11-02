@@ -123,7 +123,7 @@ def test_without_a_claude_key_nothing_changes(monkeypatch, keys):
 # 이벤트 해설 · 번역
 # --------------------------------------------------------------------------
 
-def test_events_go_to_haiku_with_a_bigger_budget(monkeypatch, keys):
+def test_events_go_to_opus_with_a_bigger_budget(monkeypatch, keys):
     def reply(kw):
         return {"items": [{"id": "000660-2026-10-15", "headline": "반도체 급락", "explain": "e",
                            "sentiment": "negative", "confidence": "high", "tags": ["AI"]}]}
@@ -135,7 +135,8 @@ def test_events_go_to_haiku_with_a_bigger_budget(monkeypatch, keys):
                                "news": ["하이닉스 11% 폭락"]}])
     assert out["000660-2026-10-15"]["headline"] == "반도체 급락"
     call = fake.calls[0]
-    assert call["model"] == "claude-haiku-5-5" and not call["_beta"]
+    assert call["model"] == "claude-opus-5-5" and call["_beta"]
+    assert call["fallbacks"] == "default"
     assert call["output_config"]["effort"] == "low"
     assert keys == []
 
@@ -148,6 +149,16 @@ def test_translation_is_claude_only(monkeypatch, keys):
     monkeypatch.delenv("ANTHROPIC_API_KEY")
     assert llm.translate(["Dell stock plunges 11%"]) == ["Dell stock plunges 11%"]
     assert keys == [], "Claude 가 없으면 번역하지 않는다 — Gemini 쿼터는 브리핑 몫"
+
+
+def test_haiku_override_sends_no_server_fallback(monkeypatch, keys):
+    """서버 측 거절 폴백은 Haiku 에 없다 — env 로 Haiku 로 되돌려도 폴백을 빼고 보낸다."""
+    monkeypatch.setattr(llm, "CLAUDE_BULK_MODEL", "claude-haiku-5-5")
+    fake = use(monkeypatch, FakeClient({"items": [{"i": 0, "ko": "델 주가 11% 급락"}]}))
+    assert llm.translate(["Dell stock plunges 11%"]) == ["델 주가 11% 급락"]
+    call = fake.calls[0]
+    assert call["model"] == "claude-haiku-5-5" and not call["_beta"]
+    assert "fallbacks" not in call
 
 
 # --------------------------------------------------------------------------
