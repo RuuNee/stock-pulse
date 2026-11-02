@@ -16,7 +16,7 @@ from datetime import datetime
 import pytest
 
 from pipeline.config import ET, KST
-from pipeline.gate import LATE, ON_TIME, SKIP, decide, send_mode
+from pipeline.gate import LATE, ON_TIME, SKIP, WAIT, decide, seconds_until_window, send_mode
 
 
 def kst(y, m, d, hh, mm):
@@ -35,8 +35,10 @@ def empty_data(tmp_path):
 
 # 2026-07-28 은 화요일 — 국장/미장 모두 정상 개장일.
 @pytest.mark.parametrize("hh,mm,expected", [
-    (4, 20, SKIP),      # 가장 이른 슬롯이 제시간에 깨어난 경우 — 뒤 슬롯에 맡긴다
-    (7, 44, SKIP),      # 창 1분 전
+    (3, 44, SKIP),      # 창 시작 241분 전 — 더 가까운 슬롯에 맡긴다
+    (3, 45, WAIT),      # 240분 전 — 여기부터 창 시작까지 기다렸다가 보낸다
+    (4, 20, WAIT),      # 예전에는 버리던 이른 슬롯 (2026-11-03 부터 기다린다)
+    (7, 44, WAIT),      # 창 1분 전
     (7, 45, ON_TIME),   # 창 시작
     (8, 20, ON_TIME),   # 지연 없는 슬롯의 정상 발송 시각
     (8, 40, ON_TIME),   # 창 끝
@@ -52,8 +54,10 @@ def test_kr_send_mode(empty_data, hh, mm, expected):
 
 
 @pytest.mark.parametrize("hh,mm,expected", [
-    (4, 40, SKIP),
-    (8, 14, SKIP),
+    (4, 14, SKIP),
+    (4, 15, WAIT),
+    (4, 40, WAIT),
+    (8, 14, WAIT),
     (8, 15, ON_TIME),
     (8, 40, ON_TIME),
     (9, 10, ON_TIME),
@@ -127,3 +131,41 @@ def test_force_overrides_everything(empty_data):
 def test_unknown_market_raises(empty_data):
     with pytest.raises(ValueError):
         send_mode("JP", now=kst(2026, 7, 28, 8, 20), data_dir=empty_data)
+
+
+# --------------------------------------------------------------------------
+# 기다렸다 보내기 (2026-11-03) — 일찍 깬 슬롯이 창 시작까지 잔다
+# --------------------------------------------------------------------------
+
+def test_wait_seconds_reach_the_window_start():
+    assert seconds_until_window("KR", kst(2026, 7, 28, 5, 7)) == (7 * 60 + 45 - (5 * 60 + 7)) * 60
+    assert seconds_until_window("US", et(2026, 7, 28, 6, 0)) == (8 * 60 + 15 - 6 * 60) * 60
+    assert seconds_until_window("KR", kst(2026, 7, 28, 8, 0)) == 0, "창이 이미 열렸으면 0"
+
+
+def test_waiting_slot_still_respects_holidays_and_duplicates(empty_data):
+    """기다리기 전에 휴장·중복부터 본다 — 아니면 휴장일에 4시간 자고 나서 보낸다."""
+    mode, _ = send_mode("KR", now=kst(2026, 8, 17, 5, 7), data_dir=empty_data)
+    assert mode == SKIP
+    (empty_data / "brief" / "2026-07-28-KR.json").write_text("{}", encoding="utf-8")
+    mode, reason = send_mode("KR", now=kst(2026, 7, 28, 5, 7), data_dir=empty_data)
+    assert mode == SKIP and "중복" in reason
+
+
+def test_waiting_is_not_sending_yet(empty_data):
+    """status 의 '게이트' 줄이 기다리는 슬롯을 '발송'으로 적으면 안 된다."""
+    run, reason = decide("KR", now=kst(2026, 7, 28, 5, 7), data_dir=empty_data)
+    assert run is False and "기다렸다가" in reason
+
+
+def test_gate_cli_prints_how_long_to_wait(monkeypatch, empty_data, capsys):
+    """워크플로가 읽는 형식: 1행 발송 여부, 2행 모드, 3행 기다릴 초."""
+    from pipeline import gate, run
+    monkeypatch.setattr(gate, "local_now", lambda market: kst(2026, 7, 28, 5, 7))
+    monkeypatch.setattr(gate, "DATA_DIR", empty_data)
+    assert run.main(["gate", "--market", "KR"]) == 0
+    assert capsys.readouterr().out.split() == ["false", "wait", str(158 * 60)]
+
+    monkeypatch.setattr(gate, "local_now", lambda market: kst(2026, 7, 28, 7, 45))
+    assert run.main(["gate", "--market", "KR"]) == 0
+    assert capsys.readouterr().out.split() == ["true", "ontime", "0"]

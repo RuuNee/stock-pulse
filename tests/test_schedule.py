@@ -2,10 +2,18 @@
 
 2026-07-28 국장 브리핑 미발송은 코드 버그가 아니라 배치 문제였다. 슬롯이 2개
 (23:11Z, 23:23Z)뿐이었는데 GitHub 이 둘 다 ~55분 밀려 깨우는 바람에 발송 창을
-같이 놓쳤다. 그래서 "지연이 0~240분 어디에 걸리든 최소 한 슬롯은 창 안에
-떨어진다"를 테스트로 고정한다. cron 을 손대면 여기서 먼저 깨진다.
+같이 놓쳤다. 그 뒤로 "지연이 0~240분 어디에 걸리든 최소 한 슬롯은 창 안에
+떨어진다"를 여기 고정했다.
 
-실측 지연(이 저장소 워크플로 로그): +6, +51, +58, +89, +114, +202 분.
+2026-10 에 지연이 3.5~6.7시간으로 커지며 그 전제가 깨졌다 — 미장 브리핑이 3주 내내
+개장 뒤에 나갔다. 지금은 슬롯이 하루 내내 2시간 간격이고, 창 시작
+`BRIEF_MAX_WAIT_MIN` 분 안에 깬 슬롯은 창 시작까지 기다렸다가 보낸다. 그래서 슬롯이
+쓸모 있는 구간은 창 하나가 아니라 [창 시작 − 최대 대기, 창 끝] 이고, 지연이
+0~12시간 어디에 걸리든 그 구간에 깨는 슬롯이 있어야 한다. cron 을 손대면 여기서
+먼저 깨진다.
+
+실측 지연(이 저장소 워크플로 로그): +6, +51, +58, +89, +114, +202 분 (2026-07),
+국장 +212~+239 분, 미장 +368~+400 분 (2026-10).
 """
 
 from __future__ import annotations
@@ -14,16 +22,22 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
-from pipeline.config import BRIEF_LATE_CUTOFF, BRIEF_WINDOW, CLOSE_BRIEF_WINDOW
+from pipeline.config import (
+    BRIEF_LATE_CUTOFF, BRIEF_MAX_WAIT_MIN, BRIEF_WINDOW, CLOSE_BRIEF_WINDOW,
+)
 
 WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
-MAX_DELAY_MIN = 240   # 실측 최대 202분 + 여유
+MAX_DELAY_MIN = 12 * 60     # 실측 최대 400분(미장, 2026-10) + 여유
+CLOSE_MAX_DELAY_MIN = 240   # 마감 브리핑은 창이 5시간이라 슬롯 배치만으로 덮는다
 DAY = 24 * 60
 
 # 발송 창을 UTC 로 옮길 때 쓰는 현지 시간대 오프셋 (시간 단위).
 UTC_OFFSET = {"KR": +9, "US-EDT": -4, "US-EST": -5}
+
+OBSERVED_DELAYS = [0, 6, 51, 58, 89, 114, 202, 212, 239, 368, 400]
 
 
 def _minutes(hhmm: str) -> int:
@@ -31,24 +45,44 @@ def _minutes(hhmm: str) -> int:
     return int(hour) * 60 + int(minute)
 
 
+def _hours(field: str) -> list[int]:
+    """cron 시 필드 → 시 목록. `7`, `0,2,4`, `*/2`, `1-23/2` 를 읽는다."""
+    out = []
+    for part in field.split(","):
+        base, _, step = part.partition("/")
+        if base == "*":
+            lo, hi = 0, 23
+        elif "-" in base:
+            lo, hi = (int(x) for x in base.split("-"))
+        else:
+            lo = hi = int(base)
+        out.extend(range(lo, hi + 1, int(step) if step else 1))
+    return out
+
+
 def slots_utc(workflow: str) -> list[int]:
     """워크플로의 cron 예약 시각을 자정 기준 UTC 분으로."""
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
-    found = re.findall(r'-\s*cron:\s*"(\d+)\s+(\d+)\s', text)
+    found = re.findall(r'-\s*cron:\s*"(\d+)\s+(\S+)\s', text)
     assert found, f"{workflow}: cron 을 못 찾았습니다"
-    return sorted(int(hour) * 60 + int(minute) for minute, hour in found)
+    return sorted(hour * 60 + int(minute) for minute, hours in found for hour in _hours(hours))
 
 
-def window_utc(market: str, offset_hours: int) -> tuple[int, int]:
-    """현지 발송 창 → 자정 기준 UTC 분 구간 (0~1439, 자정을 넘을 수 있다)."""
-    start, end = BRIEF_WINDOW[market]
+def band_utc(start: str, end: str, offset_hours: int, lead: int = 0) -> tuple[int, int]:
+    """현지 [start − lead, end] → 자정 기준 UTC 분 구간 (자정을 넘을 수 있다)."""
     shift = offset_hours * 60
-    return (_minutes(start) - shift) % DAY, (_minutes(end) - shift) % DAY
+    return (_minutes(start) - lead - shift) % DAY, (_minutes(end) - shift) % DAY
 
 
-def sends(slots: list[int], window: tuple[int, int], delay: int) -> bool:
-    """지연이 `delay`분일 때 발송 창 안에 깨어나는 슬롯이 하나라도 있는가."""
-    start, end = window
+def useful_band(market: str, offset_hours: int) -> tuple[int, int]:
+    """깨어나면 정시 발송으로 이어지는 구간 = [창 시작 − 최대 대기, 창 끝]."""
+    start, end = BRIEF_WINDOW[market]
+    return band_utc(start, end, offset_hours, lead=BRIEF_MAX_WAIT_MIN)
+
+
+def sends(slots: list[int], band: tuple[int, int], delay: int) -> bool:
+    """지연이 `delay`분일 때 구간 안에 깨어나는 슬롯이 하나라도 있는가."""
+    start, end = band
     for slot in slots:
         woke = (slot + delay) % DAY
         inside = start <= woke <= end if start <= end else (woke >= start or woke <= end)
@@ -57,50 +91,63 @@ def sends(slots: list[int], window: tuple[int, int], delay: int) -> bool:
     return False
 
 
-def assert_full_coverage(slots, window, label):
-    missed = [d for d in range(MAX_DELAY_MIN + 1) if not sends(slots, window, d)]
+def assert_full_coverage(slots, band, label, max_delay=MAX_DELAY_MIN):
+    missed = [d for d in range(max_delay + 1) if not sends(slots, band, d)]
     assert not missed, f"{label}: 지연 {missed[:10]}분(총 {len(missed)}개)에 발송 슬롯이 없습니다"
 
 
-@pytest.mark.parametrize("delay", [0, 6, 51, 58, 89, 114, 202])
+@pytest.mark.parametrize("delay", OBSERVED_DELAYS)
 def test_kr_absorbs_observed_delays(delay):
-    """실제로 관측된 지연들은 반드시 발송으로 이어진다."""
-    assert sends(slots_utc("brief-kr.yml"), window_utc("KR", UTC_OFFSET["KR"]), delay)
+    """실제로 관측된 지연들은 반드시 정시 발송으로 이어진다."""
+    assert sends(slots_utc("brief-kr.yml"), useful_band("KR", UTC_OFFSET["KR"]), delay)
 
 
-def test_kr_covers_every_delay_up_to_4h():
-    assert_full_coverage(slots_utc("brief-kr.yml"), window_utc("KR", UTC_OFFSET["KR"]), "brief-kr")
+@pytest.mark.parametrize("delay", OBSERVED_DELAYS)
+@pytest.mark.parametrize("season", ["US-EDT", "US-EST"])
+def test_us_absorbs_observed_delays(season, delay):
+    assert sends(slots_utc("brief-us.yml"), useful_band("US", UTC_OFFSET[season]), delay)
+
+
+def test_kr_covers_every_delay_up_to_12h():
+    assert_full_coverage(slots_utc("brief-kr.yml"), useful_band("KR", UTC_OFFSET["KR"]), "brief-kr")
+
+
+@pytest.mark.parametrize("season", ["US-EDT", "US-EST"])
+def test_us_covers_every_delay_in_both_dst_seasons(season):
+    """cron 은 UTC 고정이라 서머타임 양쪽 계절을 각각 덮어야 한다."""
+    assert_full_coverage(slots_utc("brief-us.yml"), useful_band("US", UTC_OFFSET[season]),
+                         f"brief-us {season}")
+
+
+@pytest.mark.parametrize("workflow,market", [("brief-kr.yml", "KR"), ("brief-us.yml", "US")])
+def test_slot_spacing_never_exceeds_the_useful_band(workflow, market):
+    """슬롯 간격이 [창 시작 − 최대 대기, 창 끝] 보다 넓으면 특정 지연대가 통째로 빈다."""
+    start, end = BRIEF_WINDOW[market]
+    width = _minutes(end) - _minutes(start) + BRIEF_MAX_WAIT_MIN
+    slots = slots_utc(workflow)
+    gaps = [b - a for a, b in zip(slots, slots[1:])] + [slots[0] + DAY - slots[-1]]
+    assert max(gaps) <= width, f"{workflow}: 슬롯 간격 {max(gaps)}분 > 쓸모 있는 구간 {width}분"
+
+
+@pytest.mark.parametrize("workflow", ["brief-kr.yml", "brief-us.yml"])
+def test_waiting_fits_in_the_job_timeout(workflow):
+    """기다림 + 생성이 잡 한도 안이어야 한다 — 넘으면 창 직전에 잡이 죽는다."""
+    job = yaml.safe_load((WORKFLOWS / workflow).read_text(encoding="utf-8"))["jobs"]["brief"]
+    timeout = job.get("timeout-minutes", 360)
+    assert BRIEF_MAX_WAIT_MIN + 30 <= timeout <= 360
 
 
 def test_close_brief_covers_every_delay_up_to_4h():
     """장 마감 브리핑 — 첫 슬롯이 240분 밀려도 마감 브리핑 창(15:40~20:30 KST) 안이어야 한다."""
     start, end = CLOSE_BRIEF_WINDOW["KR"]
-    shift = UTC_OFFSET["KR"] * 60
-    window = ((_minutes(start) - shift) % DAY, (_minutes(end) - shift) % DAY)
-    assert_full_coverage(slots_utc("brief-kr-close.yml"), window, "brief-kr-close")
+    assert_full_coverage(slots_utc("brief-kr-close.yml"), band_utc(start, end, UTC_OFFSET["KR"]),
+                         "brief-kr-close", max_delay=CLOSE_MAX_DELAY_MIN)
 
 
 def test_close_brief_never_wakes_before_the_close():
     """15:30 마감 전에 깨어난 슬롯은 장중 값으로 판정한다 — 게이트가 막지만 슬롯부터 뒤에 둔다."""
     first = min(slots_utc("brief-kr-close.yml")) + UTC_OFFSET["KR"] * 60
     assert first >= _minutes(CLOSE_BRIEF_WINDOW["KR"][0])
-
-
-@pytest.mark.parametrize("season", ["US-EDT", "US-EST"])
-def test_us_covers_every_delay_in_both_dst_seasons(season):
-    """cron 은 UTC 고정이라 서머타임 양쪽 계절을 각각 덮어야 한다."""
-    window = window_utc("US", UTC_OFFSET[season])
-    assert_full_coverage(slots_utc("brief-us.yml"), window, f"brief-us {season}")
-
-
-@pytest.mark.parametrize("workflow,market", [("brief-kr.yml", "KR"), ("brief-us.yml", "US")])
-def test_slot_spacing_never_exceeds_window_width(workflow, market):
-    """슬롯 간격이 창 너비보다 넓으면 특정 지연대가 통째로 빈다."""
-    start, end = BRIEF_WINDOW[market]
-    width = _minutes(end) - _minutes(start)
-    slots = slots_utc(workflow)
-    gaps = [b - a for a, b in zip(slots, slots[1:])]
-    assert max(gaps) <= width, f"{workflow}: 슬롯 간격 {max(gaps)}분 > 발송 창 {width}분"
 
 
 # --------------------------------------------------------------------------
@@ -134,9 +181,10 @@ def test_late_cutoff_sits_after_the_window(market):
     assert _minutes(BRIEF_LATE_CUTOFF[market]) > _minutes(BRIEF_WINDOW[market][1])
 
 
-@pytest.mark.parametrize("workflow,days", [("brief-kr.yml", "0-4"), ("brief-us.yml", "1-5")])
-def test_weekday_spec(workflow, days):
-    """국장 슬롯은 전날 UTC(일~목), 미장 슬롯은 당일 UTC(월~금)에 예약돼야 한다."""
+@pytest.mark.parametrize("workflow", ["brief-kr.yml", "brief-us.yml"])
+def test_brief_slots_run_every_day(workflow):
+    """장전 브리핑 슬롯은 매일 돈다 — 주말·휴장일은 gate 가 현지 날짜로 거른다.
+    UTC 요일로 거르면 자정을 넘겨 깨는 슬롯(국장은 전날 UTC)이 엉뚱한 날에 빠진다."""
     text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
-    specs = set(re.findall(r'-\s*cron:\s*"\d+\s+\d+\s+\*\s+\*\s+([\d-]+)"', text))
-    assert specs == {days}, f"{workflow}: 요일 지정이 {specs}"
+    specs = set(re.findall(r'-\s*cron:\s*"\d+\s+\S+\s+\*\s+\*\s+(\S+)"', text))
+    assert specs == {"*"}, f"{workflow}: 요일 지정이 {specs}"

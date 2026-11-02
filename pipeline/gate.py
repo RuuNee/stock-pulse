@@ -4,19 +4,24 @@
 실측 지연은 6분에서 202분까지 벌어졌고, 2026-07-28 국장 브리핑은 23:11Z 예약이
 00:09Z(=09:09 KST)에 깨어나면서 통째로 발송되지 않았다.
 
-그래서 워크플로는 목표 시각 앞뒤로 슬롯을 여러 개 예약하고, 깨어난 슬롯마다
-이 판정을 먼저 돌린다. 창 밖이면 몇 초 만에 끝나므로 남는 슬롯은 사실상 공짜다.
+그래서 워크플로는 슬롯을 여러 개 예약하고, 깨어난 슬롯마다 이 판정을 먼저
+돌린다. 쓸모없는 슬롯은 몇 초 만에 끝나므로 남는 슬롯은 사실상 공짜다.
 
 판정 순서(먼저 걸리는 쪽이 이긴다):
   1. 수동 실행(--force)  → 무조건 발송
   2. 휴장일             → 발송 안 함
   3. 오늘자 브리핑 파일이 이미 있음 → 중복 발송 안 함
-  4. 창 전  → 발송 안 함 (뒤 슬롯이 처리한다)
-  5. 창 안  → 정시 발송
-  6. 창 뒤 ~ 지각 마감 → 지각 발송 (개장 뒤라고 표시해서 보낸다)
-  7. 지각 마감도 지남 → 발송 안 함
+  4. 창 시작까지 최대 대기보다 많이 남음 → 발송 안 함 (더 가까운 슬롯이 처리한다)
+  5. 창 시작까지 최대 대기 안 → 창 시작까지 기다렸다가 발송 (WAIT)
+  6. 창 안  → 정시 발송
+  7. 창 뒤 ~ 지각 마감 → 지각 발송 (개장 뒤라고 표시해서 보낸다)
+  8. 지각 마감도 지남 → 발송 안 함
 
-6번이 있는 이유: 2026-08-07 에 GitHub 이 슬롯 7개를 한 덩어리로 모아 창 뒤에
+5번이 있는 이유: 2026-10 에 지연이 3.5~6.7시간으로 커져 창 근처에 모아 둔 슬롯이
+전부 창 뒤에 떨어졌다. 일찍 깬 슬롯이 기다려 주면 지연 폭과 상관없이 정시에
+나간다. 자세한 배경은 config.BRIEF_MAX_WAIT_MIN 주석에 있다.
+
+7번이 있는 이유: 2026-08-07 에 GitHub 이 슬롯 7개를 한 덩어리로 모아 창 뒤에
 방출하면서 국장 브리핑이 통째로 사라졌다. 슬롯을 아무리 넓게 깔아도 몰려서
 늦으면 같이 늦는다. 자세한 배경은 config.BRIEF_LATE_CUTOFF 주석에 있다.
 """
@@ -27,17 +32,18 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import json
+import math
 
 from .config import (
-    BRIEF_LATE_CUTOFF, BRIEF_WINDOW, CLOSE_BRIEF_ENABLED, CLOSE_BRIEF_MIN_MOVE,
-    CLOSE_BRIEF_WINDOW, DATA_DIR,
+    BRIEF_LATE_CUTOFF, BRIEF_MAX_WAIT_MIN, BRIEF_WINDOW, CLOSE_BRIEF_ENABLED,
+    CLOSE_BRIEF_MIN_MOVE, CLOSE_BRIEF_WINDOW, DATA_DIR,
 )
 from .util.dates import (
     is_trading_day, next_session_date, now_et, now_kst, session_closed,
 )
 
 # 발송 모드. 워크플로가 stdout 두 번째 줄로 이 값을 그대로 읽는다.
-ON_TIME, LATE, SKIP = "ontime", "late", "skip"
+ON_TIME, LATE, SKIP, WAIT = "ontime", "late", "skip", "wait"
 
 
 def local_now(market: str) -> datetime:
@@ -104,6 +110,14 @@ def late_cutoff(market: str) -> time:
     return _hhmm(BRIEF_LATE_CUTOFF[market])
 
 
+def seconds_until_window(market: str, now: datetime | None = None) -> int:
+    """오늘 발송 창 시작까지 남은 초(지났으면 0). 기다리는 슬롯이 `sleep` 에 쓴다."""
+    market = market.upper()
+    now = now or local_now(market)
+    start = datetime.combine(now.date(), window(market)[0], tzinfo=now.tzinfo)
+    return max(0, math.ceil((start - now).total_seconds()))
+
+
 def send_mode(market: str, *, force: bool = False, now: datetime | None = None,
               data_dir: Path | None = None) -> tuple[str, str]:
     """(ON_TIME | LATE | SKIP, 사람이 읽을 이유)를 돌려준다."""
@@ -129,7 +143,10 @@ def send_mode(market: str, *, force: bool = False, now: datetime | None = None,
     label = now.strftime("%H:%M")
     span = f"{start.strftime('%H:%M')}~{end.strftime('%H:%M')}"
     if now.time() < start:
-        return SKIP, f"현재 {label} — 발송 창({span}) 전, 다음 슬롯이 처리합니다"
+        ahead = math.ceil(seconds_until_window(market, now) / 60)
+        if ahead <= BRIEF_MAX_WAIT_MIN:
+            return WAIT, f"현재 {label} — 발송 창({span}) 전, 창 시작까지 {ahead}분 기다렸다가 보냅니다"
+        return SKIP, f"현재 {label} — 발송 창({span})까지 {ahead}분, 더 가까운 슬롯이 처리합니다"
     if now.time() <= end:
         return ON_TIME, f"현재 {label} — 발송 창({span}) 안, 발송합니다"
     if now.time() <= cutoff:
@@ -141,9 +158,9 @@ def send_mode(market: str, *, force: bool = False, now: datetime | None = None,
 
 def decide(market: str, *, force: bool = False, now: datetime | None = None,
            data_dir: Path | None = None) -> tuple[bool, str]:
-    """(발송할지, 사람이 읽을 이유)를 돌려준다."""
+    """(지금 발송할지, 사람이 읽을 이유)를 돌려준다. 기다리는 슬롯(WAIT)은 아직 발송이 아니다."""
     mode, reason = send_mode(market, force=force, now=now, data_dir=data_dir)
-    return mode != SKIP, reason
+    return mode in (ON_TIME, LATE), reason
 
 
 # --------------------------------------------------------------------------

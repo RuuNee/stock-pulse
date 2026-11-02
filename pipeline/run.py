@@ -119,15 +119,18 @@ def _cmd_brief(args) -> int:
 def _cmd_gate(args) -> int:
     """워크플로가 부르는 판정기.
 
-    stdout 1행 = true/false, 2행 = 발송 모드(ontime|late|skip). 이유는 stderr 로.
-    워크플로가 2행을 보고 `brief --late` 를 붙일지 정한다.
+    stdout 1행 = true/false(지금 발송), 2행 = 발송 모드(ontime|late|wait|skip),
+    3행 = 기다릴 초(wait 일 때만 0 보다 크다). 이유는 stderr 로.
+    워크플로는 2행이 wait 면 3행만큼 잔 뒤 다시 묻고, late 면 `brief --late` 를 붙인다.
     """
-    from .gate import SKIP, send_mode
+    from .gate import LATE, ON_TIME, WAIT, seconds_until_window, send_mode
 
-    mode, reason = send_mode(args.market, force=args.force)
+    market = args.market.upper()
+    mode, reason = send_mode(market, force=args.force)
     print(reason, file=sys.stderr)
-    print("true" if mode != SKIP else "false")
+    print("true" if mode in (ON_TIME, LATE) else "false")
     print(mode)
+    print(seconds_until_window(market) if mode == WAIT else 0)
     return 0
 
 

@@ -113,6 +113,17 @@ def test_dispatch_can_run_under_the_gate(name):
         f"{name}: force=false 가 --force 를 막지 않습니다"
 
 
+@pytest.mark.parametrize("name", BRIEFS)
+def test_early_slot_waits_for_the_window(name):
+    """창 시작 4시간 안에 깬 슬롯은 끝내지 말고 기다렸다가 다시 물어야 한다.
+    2026-10 에 슬롯이 3.5~6.7시간 밀리면서 미장 브리핑이 매일 개장 뒤에 나갔다."""
+    gate = [s for s in load(WORKFLOW_DIR / name)["jobs"]["brief"]["steps"]
+            if s.get("id") == "gate"][0]["run"]
+    assert '= "wait"' in gate and 'sleep "$secs"' in gate, f"{name}: wait 를 처리하지 않습니다"
+    assert gate.count("pipeline.run gate") >= 2, f"{name}: 기다린 뒤 다시 묻지 않습니다"
+    assert "git fetch" in gate, f"{name}: 기다리는 동안 올라온 브리핑을 못 봐서 중복 발송할 수 있습니다"
+
+
 @pytest.mark.parametrize("name", SENDERS)
 def test_brief_has_own_concurrency_group(name):
     """data-sync(26분) 뒤에 큐잉되면 발송 창을 통째로 놓친다."""

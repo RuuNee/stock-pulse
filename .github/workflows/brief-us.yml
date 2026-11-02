@@ -3,22 +3,16 @@ name: brief-us
 # 미장 장전 브리핑 — 개장(09:30 ET) 20~75분 전 도착 목표.
 # 설계 근거는 brief-kr.yml 머리말 참고 (스케줄러 지연 6~202분 대응).
 #
-# 미장만의 사정: cron 은 UTC 고정이라 서머타임을 못 따라간다. 그래서 슬롯을
-# EDT/EST 양쪽 창을 모두 덮도록 UTC 08:40~14:00 에 40분 간격으로 깔고,
-# 계절이 어긋난 슬롯은 gate 가 ET 실제 시각을 보고 걸러낸다.
+# 2026-11-03: 슬롯이 6~6.7시간 밀려 깨어나면서 10-06 이후 거의 매일 개장 뒤에
+# 지각 발송됐다. 그래서 하루 내내 2시간 간격으로 슬롯을 깔고, 창 시작(08:15 ET)
+# 4시간 안에 깬 슬롯이 기다렸다가 보낸다 (brief-kr.yml 머리말 7번).
+# cron 은 UTC 고정이지만 gate 가 ET 실제 시각으로 판정하므로 서머타임과 무관하다.
 #   EDT(UTC−4) 발송 창 = 12:15~13:10 UTC
 #   EST(UTC−5) 발송 창 = 13:15~14:10 UTC
 on:
   schedule:
-    - cron: "40 8 * * 1-5"    # 04:40 EDT — 4시간 밀린 실행을 받는 슬롯
-    - cron: "20 9 * * 1-5"
-    - cron: "0 10 * * 1-5"
-    - cron: "40 10 * * 1-5"
-    - cron: "20 11 * * 1-5"
-    - cron: "0 12 * * 1-5"
-    - cron: "40 12 * * 1-5"   # 08:40 EDT — EDT 에서 지연이 없을 때의 슬롯
-    - cron: "20 13 * * 1-5"   # 08:20 EST — EST 에서 지연이 없을 때의 슬롯
-    - cron: "0 14 * * 1-5"    # 09:00 EST
+    # 홀수 시 37분(UTC) = 매일 2시간마다. 국장 슬롯(짝수 시 7분)과 엇갈리게 뒀다.
+    - cron: "37 1,3,5,7,9,11,13,15,17,19,21,23 * * *"
   workflow_dispatch:
     inputs:
       send:
@@ -40,6 +34,7 @@ permissions:
 jobs:
   brief:
     runs-on: ubuntu-latest
+    timeout-minutes: 300   # 기다림(최대 240분) + 생성 몇 분
     steps:
       # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 중복 판정도 커밋도 최신
       # main 기준이어야 하므로 명시적으로 main 을 받는다.
@@ -69,8 +64,20 @@ jobs:
               echo "리허설 모드: 빌드·렌더링만 확인합니다"
             fi
           fi
-          # gate stdout: 1행 true/false, 2행 발송 모드(ontime|late|skip).
+          # gate stdout: 1행 true/false, 2행 발송 모드(ontime|late|wait|skip), 3행 기다릴 초.
           gate=$(python3 -m pipeline.run gate $args)
+          # wait = 창 시작 4시간 안에 깨어났다. 끝내지 않고 창 시작까지 기다렸다가 다시
+          # 묻는다 — 스케줄러가 몇 시간 밀려도 이 실행이 정시에 보낸다.
+          for _ in 1 2 3; do
+            [ "$(printf '%s\n' "$gate" | sed -n 2p)" = "wait" ] || break
+            secs=$(printf '%s\n' "$gate" | sed -n 3p)
+            echo "발송 창까지 $(( (secs + 59) / 60 ))분 기다립니다"
+            sleep "$secs"
+            # 기다리는 동안 다른 실행이 보냈으면 중복 검사가 알아채도록 최신 main 으로.
+            git fetch -q origin main && git reset -q --hard FETCH_HEAD \
+              || echo "main 갱신 실패 — 받아 둔 트리로 판정합니다"
+            gate=$(python3 -m pipeline.run gate $args)
+          done
           late=""
           if [ "$(printf '%s\n' "$gate" | sed -n 2p)" = "late" ]; then
             late="--late"   # 창을 놓친 발송 — 메시지에 '늦은 브리핑'을 박는다

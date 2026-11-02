@@ -35,15 +35,21 @@ name: brief-kr
 # 6) 외부 트리거 — cron-job.org 가 정시에 workflow_dispatch 를 부른다.
 #    dispatch 는 큐 지연이 없다. 이때는 `force=false` 로 불러서 휴장일·중복·
 #    발송 창 검사를 그대로 태운다. 절차는 05-운영가이드 ⑦ 참고.
+#
+# ── 2026-11-03: 지연이 창보다 길어졌다 ─────────────────────────────
+# 10월 들어 국장 슬롯이 3.5~4시간, 미장 슬롯이 6~6.7시간 밀려 깨어났다. 국장은
+# 04:20 슬롯이 07:50 즈음 깨어나 아슬아슬하게 창에 걸렸고, 미장은 3주 내내 개장 뒤
+# 지각 발송이었다. 외부 트리거(6)는 08-09 이후 호출 기록이 없다.
+# 7) 슬롯을 하루 내내 2시간 간격으로 깔고(1의 40분 간격 7슬롯을 대체), 창 시작
+#    4시간 안에 깨어난 슬롯은 끝내지 않고 창 시작까지 기다렸다가 보낸다(gate →
+#    wait, config.BRIEF_MAX_WAIT_MIN). 지연이 몇 시간이든 그 슬롯이 07:45 에 보낸다.
+#    기다리는 실행은 동시성 그룹 때문에 하나뿐이고, 뒤에 깬 슬롯은 대기열에서 서로
+#    밀어내다가 마지막 하나가 중복 검사로 끝난다.
 on:
   schedule:
-    - cron: "20 19 * * 0-4"   # 04:20 KST — 4시간 밀린 실행을 받는 슬롯
-    - cron: "0 20 * * 0-4"    # 05:00 KST
-    - cron: "40 20 * * 0-4"   # 05:40 KST
-    - cron: "20 21 * * 0-4"   # 06:20 KST
-    - cron: "0 22 * * 0-4"    # 07:00 KST
-    - cron: "40 22 * * 0-4"   # 07:40 KST
-    - cron: "20 23 * * 0-4"   # 08:20 KST — 지연이 없을 때 발송하는 슬롯
+    # 짝수 시 7분(UTC) = 매일 2시간마다. 창 시작(07:45 KST) 4시간 안에 깬 슬롯이
+    # 기다렸다가 보내고, 주말·휴장일·창과 먼 슬롯은 gate 가 15초 만에 끝낸다.
+    - cron: "7 0,2,4,6,8,10,12,14,16,18,20,22 * * *"
   workflow_dispatch:
     inputs:
       send:
@@ -65,6 +71,7 @@ permissions:
 jobs:
   brief:
     runs-on: ubuntu-latest
+    timeout-minutes: 300   # 기다림(최대 240분) + 생성 몇 분
     steps:
       # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 중복 판정도 커밋도 최신
       # main 기준이어야 하므로 명시적으로 main 을 받는다.
@@ -94,8 +101,20 @@ jobs:
               echo "리허설 모드: 빌드·렌더링만 확인합니다"
             fi
           fi
-          # gate stdout: 1행 true/false, 2행 발송 모드(ontime|late|skip).
+          # gate stdout: 1행 true/false, 2행 발송 모드(ontime|late|wait|skip), 3행 기다릴 초.
           gate=$(python3 -m pipeline.run gate $args)
+          # wait = 창 시작 4시간 안에 깨어났다. 끝내지 않고 창 시작까지 기다렸다가 다시
+          # 묻는다 — 스케줄러가 몇 시간 밀려도 이 실행이 정시에 보낸다.
+          for _ in 1 2 3; do
+            [ "$(printf '%s\n' "$gate" | sed -n 2p)" = "wait" ] || break
+            secs=$(printf '%s\n' "$gate" | sed -n 3p)
+            echo "발송 창까지 $(( (secs + 59) / 60 ))분 기다립니다"
+            sleep "$secs"
+            # 기다리는 동안 다른 실행이 보냈으면 중복 검사가 알아채도록 최신 main 으로.
+            git fetch -q origin main && git reset -q --hard FETCH_HEAD \
+              || echo "main 갱신 실패 — 받아 둔 트리로 판정합니다"
+            gate=$(python3 -m pipeline.run gate $args)
+          done
           late=""
           if [ "$(printf '%s\n' "$gate" | sed -n 2p)" = "late" ]; then
             late="--late"   # 창을 놓친 발송 — 메시지에 '늦은 브리핑'을 박는다
