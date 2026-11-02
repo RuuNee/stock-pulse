@@ -68,8 +68,12 @@ def render(brief: dict) -> str:
         L.append("<i>코스피가 ±2% 넘게 움직인 날에만 보내는 브리핑입니다.</i>")
     if mood.get("label"):
         # 예전 파일(kind 없음)은 전날 기준 분위기였다 — 같은 말로 부르지 않는다.
-        title = "오늘 장 전망" if mood.get("kind") == "outlook" else "오늘 시장 분위기"
-        L.append(f"\n{dot} {title}: <b>{_e(mood['label'])}</b> ({mood.get('score', '?')}점)")
+        outlook = mood.get("kind") == "outlook"
+        title = "오늘 장 전망" if outlook else "오늘 시장 분위기"
+        # 전망 점수는 9시 첫 가격 방향을 맞히는 숫자다 (7~10월 82거래일: 시가 갭과 상관 0.78,
+        # 9시 이후 흐름과는 0.15). "점수 낮으니 9시에 인버스" 로 읽히지 않게 옆에 적어 둔다.
+        tail = " · 9시 시가 방향 예측" if outlook else ""
+        L.append(f"\n{dot} {title}: <b>{_e(mood['label'])}</b> ({mood.get('score', '?')}점){tail}")
         if mood.get("reason"):
             L.append(f"<i>{_e(mood['reason'])}</i>")
 

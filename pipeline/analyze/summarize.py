@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from ..config import GEMINI_BULK_MODELS, LLM_MAX_EVENTS_PER_RUN, LLM_RECENT_DAYS
+from ..config import LLM_RECENT_DAYS
 from ..util import log
 from ..util import text as T
 from . import llm
@@ -38,17 +38,22 @@ def summarize_events(ticker: dict, events: list[dict]) -> list[dict]:
 
 def enhance_globally(details: list[dict]) -> None:
     """Second pass: pick the most significant recent events across ALL tickers
-    and have Gemini write the cause + confidence for them. Mutates in place,
-    upgrading those events from rule → llm."""
-    if not llm.available(GEMINI_BULK_MODELS):
+    and have the LLM write the cause + confidence for them. Mutates in place,
+    upgrading those events from rule → llm.
+
+    이미 AI 해설이 붙은 이벤트(이전 실행에서 이어받은 것)는 건너뛴다. 예전에는 실행마다
+    해설을 처음부터 다시 만들어서 예산을 매번 같은 상위 이벤트에 썼다 — 2026-11-02
+    기준 이벤트 12,274건 중 AI 해설은 129건뿐이었다.
+    """
+    if not llm.bulk_ready():
         return
 
-    # Collect candidates (recent + has news) with their owning ticker.
+    # Collect candidates (recent + has news, not yet AI-explained) with their owning ticker.
     cands: list[tuple[dict, dict]] = []
     index: dict[str, dict] = {}
     for d in details:
         for e in d["events"]:
-            if e.get("news") and _is_recent(e):
+            if e.get("news") and _is_recent(e) and e.get("source") != "llm":
                 cands.append((d, e))
                 index[e["id"]] = e
 
@@ -57,7 +62,7 @@ def enhance_globally(details: list[dict]) -> None:
         key=lambda de: (de[1]["severity"], abs(de[1]["changePct"]), len(de[1]["news"]), de[1]["date"]),
         reverse=True,
     )
-    top = cands[:LLM_MAX_EVENTS_PER_RUN]
+    top = cands[:llm.event_budget()]
     if not top:
         return
 

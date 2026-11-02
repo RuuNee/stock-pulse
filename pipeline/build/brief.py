@@ -432,7 +432,7 @@ JSON 하나로만 답하세요:
  "threeLines": ["...", "...", "..."],
  "analysis": [{{"title": "{s0}", "body": "..."}}, {{"title": "{s1}", "body": "..."}},
               {{"title": "{s2}", "body": "..."}}, {{"title": "{s3}", "body": "..."}}],
- "news": [{{"id": 후보 번호, "why": "...", "titleKo": "영문 기사일 때만 한국어 제목"}}]}}
+ "news": [{{"id": 후보 번호, "why": "...", "titleKo": "영문 기사면 한국어 제목, 한글 기사면 빈 문자열"}}]}}
 
 threeLines — 오늘 꼭 알아야 할 3가지
 - 서로 다른 축에서 하나씩 고르세요: {axes}.
@@ -457,6 +457,31 @@ news — 주요 뉴스 {n}개
 - why: 그 기사가 오늘 투자자에게 왜 중요한지 한 문장 — 제목을 되풀이하지 말고, 그 결과 다음에 무엇이(어떤 업종·종목·지표가)
   어떤 영향을 받을 수 있는지를 씁니다. "실적은 주가에 중요합니다", "투자 심리에 영향을 줄 수 있습니다" 같은 일반론은 금지입니다.
 """
+
+# Claude 응답 형식 (output_config.format). 개수·내용 검증은 parse_commentary 가 한다 —
+# 스키마는 꼴만 강제한다. titleKo 는 필수로 두고 한글 기사면 빈 문자열을 받는다.
+_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string"},
+        "threeLines": {"type": "array", "items": {"type": "string"}},
+        "analysis": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"title": {"type": "string"}, "body": {"type": "string"}},
+            "required": ["title", "body"],
+            "additionalProperties": False,
+        }},
+        "news": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"id": {"type": "integer"}, "why": {"type": "string"},
+                           "titleKo": {"type": "string"}},
+            "required": ["id", "why", "titleKo"],
+            "additionalProperties": False,
+        }},
+    },
+    "required": ["headline", "threeLines", "analysis", "news"],
+    "additionalProperties": False,
+}
 
 # 미장 브리핑은 한국 시간 밤에 나간다. 리허설에서 "오늘 국내 기술주에 부담"이라고
 # 썼는데, 그 시각엔 그날 국장이 이미 끝났다.
@@ -494,17 +519,17 @@ _SECTION_GUIDE = {
 
 def _commentary(ctx: dict):
     """LLM 해설. 실패하면 None — 호출부가 규칙 요약으로 내려간다."""
-    if not llm.available():
+    if not llm.brief_ready():
         return None
     variant = ctx.get("variant") or ctx["market"]
     s = _SECTIONS[variant]
     g = _SECTION_GUIDE[variant]
     n = ctx.get("nNews") or BRIEF_NEWS_TOTAL
     note = _MARKET_NOTE[variant] + (_AFTER_CLOSE_NOTE if ctx.get("closePrev") else "")
-    prompt = (_INSTRUCT.format(s0=s[0], s1=s[1], s2=s[2], s3=s[3], d0=g[0], d1=g[1], n=n,
-                               note=note, axes=_AXES[variant], prev_label=_PREV_LABEL[variant])
-              + "\n[자료]\n" + context_text(ctx))
-    data = llm.brief_analysis(prompt)
+    instructions = _INSTRUCT.format(s0=s[0], s1=s[1], s2=s[2], s3=s[3], d0=g[0], d1=g[1], n=n,
+                                    note=note, axes=_AXES[variant],
+                                    prev_label=_PREV_LABEL[variant])
+    data = llm.brief_analysis(instructions, "[자료]\n" + context_text(ctx), _SCHEMA)
     if not data:
         log.warn(f"{variant}: LLM 해설 실패 — 규칙 요약으로 보냅니다")
         return None

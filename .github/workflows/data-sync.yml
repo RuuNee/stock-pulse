@@ -110,6 +110,7 @@ jobs:
         if: steps.gate.outputs.markets != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}   # 있으면 Claude 먼저, 없으면 Gemini
           SITE_URL: ${{ vars.SITE_URL }}
         run: python -m pipeline.run sync --market ${{ steps.gate.outputs.markets }}
 

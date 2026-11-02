@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -161,8 +161,9 @@ def test_next_morning_sees_yesterdays_close_brief_only(data_dir):
 
 def test_morning_prompt_shortens_yesterday_after_a_close_brief(monkeypatch):
     seen = {}
-    monkeypatch.setattr(brief.llm, "available", lambda *a: True)
-    monkeypatch.setattr(brief.llm, "brief_analysis", lambda p: seen.setdefault("p", p) and None)
+    monkeypatch.setattr(brief.llm, "brief_ready", lambda: True)
+    monkeypatch.setattr(brief.llm, "brief_analysis",
+                        lambda i, d, schema: seen.setdefault("p", i + d) and None)
     ctx = {"market": "KR", "session": date(2026, 10, 16), "outlook": {"score": 64, "label": "다소 우호"},
            "indices": [], "candidates": [],
            "closePrev": {"date": "2026-10-15", "headline": "검은 목요일", "threeLines": ["외국인 3.8조 매도"]}}
@@ -191,6 +192,9 @@ def test_close_prompt_context():
 
 def _stub_network(monkeypatch, today):
     monkeypatch.setattr(brief, "now_kst", lambda: kst(today.year, today.month, today.day, 16, 10))
+    # 뉴스 창(news_since)이 벽시계를 보면 날짜가 지날수록 테스트 기사가 창 밖으로 밀린다.
+    monkeypatch.setattr(brief, "now_utc",
+                        lambda: kst(today.year, today.month, today.day, 16, 10).astimezone(timezone.utc))
     monkeypatch.setattr(brief.naver_mod, "fetch_kr_indices", lambda: {
         "KOSPI": {"date": today.isoformat(), "close": 5554.22, "change": -454.59,
                   "changePct": -7.57, "closed": True},
@@ -205,7 +209,7 @@ def _stub_network(monkeypatch, today):
     monkeypatch.setattr(brief.news_mod, "fetch_market_wrap", lambda *a, **k: [])
     monkeypatch.setattr(brief.calendar_mod, "fetch_earnings", lambda *a, **k: [])
     monkeypatch.setattr(brief.prices, "fetch_ohlcv", lambda *a, **k: None)
-    monkeypatch.setattr(brief.llm, "available", lambda *a: False)
+    monkeypatch.setattr(brief.llm, "brief_ready", lambda: False)
 
 
 def test_build_close_brief_end_to_end(monkeypatch, data_dir):

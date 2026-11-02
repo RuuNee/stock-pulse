@@ -776,14 +776,42 @@ GEMINI_BRIEF_THINKING = 2048
 GEMINI_DELAY_SEC = 7.0         # spacing between calls → stay under free-tier RPM (~10/min)
 
 LLM_ENABLED = True             # falls back to rules automatically without a key
+
+# --------------------------------------------------------------------------
+# Claude (Anthropic) — `ANTHROPIC_API_KEY` 가 있으면 Gemini 보다 먼저 쓴다 (2026-11-02).
+#
+# 순서: Claude → Gemini 체인 → 규칙. 키가 없으면 지금까지와 똑같이 Gemini 로 돈다.
+# 무료 Gemini 는 하루 요청 수가 빠듯하고(2026-10-14 브리핑이 429 로 해설 없이 나갔다)
+# 모델이 예고 없이 막혔다(10-15 2.5 Flash-Lite 404). Claude 는 유료라 그 제약이 없다.
+#
+# 브리핑 해설은 Opus(원인 분석 품질이 핵심, 하루 2~3회), 이벤트 해설·번역은 Haiku
+# (대량·단순). 예상 비용은 월 약 $9 (99-스펙변경이력 2026-11-02).
+CLAUDE_ENABLED = True
+CLAUDE_BRIEF_MODEL = os.getenv("CLAUDE_BRIEF_MODEL", "claude-opus-5-5")
+CLAUDE_BULK_MODEL = os.getenv("CLAUDE_BULK_MODEL", "claude-haiku-5-5")
+CLAUDE_BRIEF_EFFORT = "high"     # 원인을 엮는 글이라 생각을 아끼지 않는다
+CLAUDE_BULK_EFFORT = "low"       # 짧은 요약·번역
+CLAUDE_BRIEF_MAX_TOKENS = 16000  # 생각 토큰이 출력 한도에 같이 잡힌다
+CLAUDE_BULK_MAX_TOKENS = 8000
+# 비용 로그용 단가 ($ / 100만 토큰, 입력·출력). 실행 로그에 호출별 금액을 남긴다.
+CLAUDE_PRICES = {
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-opus-5": (5.00, 25.00),       # 서버 측 거절 폴백이 넘길 수 있는 모델
+    "claude-opus-4-8": (5.00, 25.00),
+}
+# Gemini 무료 쿼터 때문에 60 으로 막아 둔 이벤트 해설 상한을 Claude 일 때만 넓힌다.
+LLM_MAX_EVENTS_PER_RUN_CLAUDE = 150
 LLM_MAX_EVENTS_PER_RUN = 60    # GLOBAL cap on AI event summaries per run
 LLM_RECENT_DAYS = 60           # only AI-summarize events newer than this
 LLM_EVENT_BATCH = 6            # events per Gemini call
 
-# Translation is OFF by default — the free Gemini quota is reserved for AI event
-# analysis (confidence + cause). Flip TRANSLATE_FOREIGN back on to auto-translate
-# foreign news (it will then compete with summaries for quota).
-TRANSLATE_FOREIGN = False      # auto-translate US/GLOBAL news to Korean
+# 해외 뉴스 번역은 **Claude 로만** 한다 (2026-11-02). 예전에는 무료 Gemini 쿼터를 이벤트
+# 해설에 아끼느라 꺼 뒀다. Claude Haiku 는 월 $1 미만이라 켜 두되, Claude 키가 없으면
+# 번역하지 않는다 — Gemini 쿼터를 번역에 쓰면 브리핑·이벤트 해설이 밀린다.
+TRANSLATE_FOREIGN = True       # auto-translate US/GLOBAL news to Korean (Claude 키가 있을 때만)
+TRANSLATE_PULSE_TOP = 20       # pulse(매시)에서 새로 번역할 최대 기사 수 — 이미 번역한 건 이어받는다
 TRANSLATE_FEED_TOP = 20        # translate only the top-N feed items when enabled
 TRANSLATE_TICKER_NEWS = False  # translate ticker news via new calls? (cache reuse always on)
 TRANSLATE_BATCH = 15           # strings per translation call
@@ -792,6 +820,10 @@ TRANSLATE_MAX_ITEMS = 200      # hard cap on translated strings per run
 
 def gemini_key() -> str | None:
     return os.getenv("GEMINI_API_KEY") or None
+
+
+def anthropic_key() -> str | None:
+    return os.getenv("ANTHROPIC_API_KEY") or None
 
 
 def telegram_token() -> str | None:

@@ -101,7 +101,13 @@ function BriefBody({ brief }: { brief: BriefT }) {
           {brief.kind === "close" && " · 15:30 마감 · 코스피가 ±2% 넘게 움직인 날에만 만들어집니다"}
         </div>
         {brief.mood.label && (
-          <div className="text-lg font-bold mt-1">{dot} {moodTitle}: {brief.mood.label} ({brief.mood.score}점)</div>
+          <div className="text-lg font-bold mt-1">
+            {dot} {moodTitle}: {brief.mood.label} ({brief.mood.score}점)
+            {/* 전망 점수는 9시 첫 가격 방향 예측이다 — 장중 흐름과는 거의 무관 (텔레그램과 같은 문구) */}
+            {brief.mood.kind === "outlook" && (
+              <span className="text-sm font-normal" style={{ color: "var(--muted)" }}> · 9시 시가 방향 예측</span>
+            )}
+          </div>
         )}
         {brief.mood.reason && (
           <div className="mt-0.5 text-sm" style={{ color: "var(--muted)" }}>{brief.mood.reason}</div>

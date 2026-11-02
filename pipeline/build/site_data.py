@@ -19,7 +19,6 @@ from ..config import (
     EVENT_BACKFILL_MAX_AGE_DAYS,
     EVENT_BACKFILL_MAX_PER_TICKER,
     EVENT_NEWS_BACKFILL,
-    GEMINI_BULK_MODELS,
     RECENT_NEWS_PER_TICKER,
     NEWS_MAX_ITEMS,
     HISTORY_YEARS,
@@ -27,7 +26,7 @@ from ..config import (
     TIER2_HISTORY_YEARS,
     TIER2_RECENT_NEWS,
     TRANSLATE_FEED_TOP,
-    TRANSLATE_FOREIGN,
+    TRANSLATE_PULSE_TOP,
     TRANSLATE_MAX_ITEMS,
     TRANSLATE_TICKER_NEWS,
     all_universe,
@@ -52,6 +51,7 @@ def build(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     log.ok(f"news: {len(market_news)} items after scoring")
     # Translate the feed FIRST — it's the main foreign-news surface, so it must
     # get LLM quota before per-ticker event summaries can spend it.
+    carry_translations(market_news, _previous_news_items())
     _translate_feed(market_news)
 
     log.step("3/6 · per-ticker data + events")
@@ -138,6 +138,8 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     """
     started = now_utc()
     log.step(f"Pulse (light) update for {markets}")
+    llm.reset()
+    _TRANS.clear()
 
     macro_indices = macro_mod.collect()
     # Use the config universe (instant) rather than enrich() (slow listing
@@ -146,6 +148,9 @@ def build_pulse(markets: tuple[str, ...] = ("KR", "US")) -> dict:
     market_news = news_mod.fetch_market_feeds(markets)
     market_news = link.tag_tickers(market_news, tickers_meta)
     market_news = score.enrich(market_news)
+    # 매시 새로 들어온 미국 기사 중 상위 몇 건만 번역한다. 이미 번역한 건 이어받는다.
+    carry_translations(market_news, _previous_news_items())
+    _translate_feed(market_news, limit=TRANSLATE_PULSE_TOP)
 
     prev = io.read_json(DATA_DIR / "market" / "overview.json", {}) or {}
     movers = prev.get("movers", {})
@@ -220,14 +225,38 @@ def _translate(strings: list[str]) -> None:
             _TRANS[en] = ko
 
 
-def _translate_feed(market_news: list[dict]) -> None:
-    """Priority pass: translate the top-importance US/GLOBAL feed items. Bounded
-    to TRANSLATE_FEED_TOP so it fits the free-tier daily budget."""
-    if not (TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODELS)):
+def _previous_news_items() -> list[dict]:
+    return (io.read_json(DATA_DIR / "news" / "latest.json", {}) or {}).get("items", [])
+
+
+def carry_translations(fresh: list[dict], previous: list[dict]) -> int:
+    """지난 실행에서 번역한 제목·요약을 같은 기사(URL)에 다시 붙인다. 붙인 수를 돌려준다.
+
+    번역 없이는 pulse 가 매시 뉴스 파일을 새로 써서 data-sync 의 번역이 한 시간 만에
+    사라진다. 원문이 바뀌었으면(정정 기사) 이어받지 않는다.
+    """
+    old = {n.get("url"): n for n in previous if n.get("url") and n.get("titleKo")}
+    carried = 0
+    for n in fresh:
+        was = old.get(n.get("url"))
+        if not was or n.get("titleKo") or was.get("title") != n.get("title"):
+            continue
+        n["titleKo"] = was["titleKo"]
+        if was.get("summaryKo") and was.get("summary") == n.get("summary"):
+            n["summaryKo"] = was["summaryKo"]
+        carried += 1
+    return carried
+
+
+def _translate_feed(market_news: list[dict], *, limit: int = TRANSLATE_FEED_TOP) -> None:
+    """Priority pass: translate the top-importance US/GLOBAL feed items that are not
+    translated yet. Claude only (`llm.can_translate`) — the free Gemini quota is for
+    the brief and event summaries."""
+    if not llm.can_translate():
         return
     feed = [n for n in market_news if n.get("market") in ("US", "GLOBAL")]
     feed.sort(key=lambda n: n.get("importance", 0), reverse=True)
-    top = feed[:TRANSLATE_FEED_TOP]
+    top = [n for n in feed if not n.get("titleKo")][:limit]
     texts: list[str] = []
     for n in top:
         texts.append(n.get("title"))
@@ -249,7 +278,7 @@ def _translate_ticker_news(details: list[dict]) -> None:
             out.extend(e.get("news", []))
         return out
 
-    if TRANSLATE_TICKER_NEWS and TRANSLATE_FOREIGN and llm.available(GEMINI_BULK_MODELS):
+    if TRANSLATE_TICKER_NEWS and llm.can_translate():
         titles = [n.get("title") for d in details for n in foreign(d)]
         _translate([t for t in titles if t])
     for d in details:
@@ -275,8 +304,7 @@ def _no_backslide(meta: dict, df):
     `index.json` 에서 통째로 빠져 검색·목록에서 사라지기 때문이다. 낡은 값은
     불편하지만 사라진 종목은 고장이다.
     """
-    path = DATA_DIR / "tickers" / meta["market"] / f"{meta['code']}.json"
-    prev = io.read_json(path)
+    prev = _previous_ticker(meta)
     prev_date = ((prev or {}).get("quote") or {}).get("date")
     if not prev_date:
         return df
@@ -291,6 +319,33 @@ def _no_backslide(meta: dict, df):
     log.warn(f"{meta['market']} {meta['code']}: 소스가 뒤로 감 "
              f"({prev_date} → {new_date}) — 저장된 봉 유지")
     return restored
+
+
+def _previous_ticker(meta: dict) -> dict | None:
+    return io.read_json(DATA_DIR / "tickers" / meta["market"] / f"{meta['code']}.json")
+
+
+# 이벤트 AI 해설에서 이어받는 필드. 이벤트 id 는 `{code}-{date}` 라 실행이 바뀌어도 같다.
+_LLM_FIELDS = ("headline", "explain", "sentiment", "confidence", "tags", "source")
+
+
+def carry_llm_explanations(events: list[dict], previous: dict | None) -> int:
+    """이전 종목 파일의 AI 해설을 같은 이벤트에 다시 붙인다. 붙인 수를 돌려준다.
+
+    붙은 뉴스 제목이 그대로일 때만 — 새 기사가 붙었으면 해설을 다시 써야 한다.
+    """
+    old = {e["id"]: e for e in (previous or {}).get("events", [])
+           if e.get("source") == "llm" and e.get("id")}
+    carried = 0
+    for e in events:
+        was = old.get(e.get("id"))
+        if not was:
+            continue
+        if [n.get("title") for n in was.get("news", [])] != [n.get("title") for n in e.get("news", [])]:
+            continue
+        e.update({k: was[k] for k in _LLM_FIELDS if k in was})
+        carried += 1
+    return carried
 
 
 def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
@@ -334,6 +389,7 @@ def _build_ticker(meta: dict, market_news: list[dict]) -> dict | None:
     if not is_etf and not is_tier2:
         _backfill_event_news(meta, events)
     events = summarize.summarize_events(meta, events)
+    carry_llm_explanations(events, _previous_ticker(meta))
 
     return {
         "code": meta["code"],

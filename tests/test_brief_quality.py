@@ -388,6 +388,7 @@ def _uses(url: str, model: str) -> bool:
 
 def _llm_env(monkeypatch, post):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)   # Gemini 경로만 본다
     monkeypatch.setattr(llm, "GEMINI_DELAY_SEC", 0)
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
     monkeypatch.setattr(llm.requests, "post", post)
@@ -413,7 +414,7 @@ def test_dead_bulk_chain_does_not_disable_the_brief_chain(monkeypatch):
         "대량 작업이 브리핑 모델 쿼터를 쓰면 안 된다"
     assert not llm.available(llm.GEMINI_BULK_MODELS)
     assert llm.available(llm.GEMINI_BRIEF_MODELS)
-    assert llm.brief_analysis("p") == {"threeLines": ["a", "b"]}
+    assert llm.brief_analysis("p", "d", {}) == {"threeLines": ["a", "b"]}
     llm.reset()
 
 
@@ -441,7 +442,7 @@ def test_daily_quota_moves_the_brief_to_its_backup_model(monkeypatch):
         return _Resp(429, daily) if _uses(url, primary) else _Resp(200, _OK)
 
     _llm_env(monkeypatch, post)
-    assert llm.brief_analysis("p") == {"threeLines": ["a", "b"]}
+    assert llm.brief_analysis("p", "d", {}) == {"threeLines": ["a", "b"]}
     assert sum(_uses(u, primary) for u in calls) == 1, "일일 한도면 같은 모델을 재시도하지 않는다"
     assert any(_uses(u, backup) for u in calls)
     llm.reset()
@@ -466,3 +467,10 @@ def test_thinking_config_matches_model_generation():
     assert llm._thinking("gemini-2.5-flash", 0) == {"thinkingBudget": 0}
     assert llm._thinking("gemini-3.5-flash-lite", 0) == {"thinkingLevel": "minimal"}
     assert llm._thinking("gemini-3.5-flash", 2048) == {"thinkingLevel": "medium"}
+
+
+def test_outlook_line_says_it_predicts_the_open_only():
+    """82거래일 실측: 시가 갭과 상관 0.78, 9시 이후 흐름과는 0.15 — 장중 매매 신호로 읽히면 안 된다."""
+    assert "9시 시가 방향 예측" in telegram.render(_brief())
+    old = telegram.render(_brief(mood={"score": 47, "label": "중립", "color": "amber"}))
+    assert "9시 시가 방향 예측" not in old, "예전 파일(전날 분위기)에는 붙이지 않는다"

@@ -38,6 +38,9 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Pulse update
+        env:
+          # 새 미국 기사 제목 번역 (Claude Haiku). 키가 없으면 번역 없이 그대로 돈다.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python -m pipeline.run pulse
 
       - name: Commit data
