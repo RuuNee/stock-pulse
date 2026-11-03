@@ -5,7 +5,8 @@ name: brief-us
 #
 # 2026-11-03: 슬롯이 6~6.7시간 밀려 깨어나면서 10-06 이후 거의 매일 개장 뒤에
 # 지각 발송됐다. 그래서 하루 내내 2시간 간격으로 슬롯을 깔고, 창 시작(08:15 ET)
-# 4시간 안에 깬 슬롯이 기다렸다가 보낸다 (brief-kr.yml 머리말 7번).
+# 5시간 30분 안에 깬 슬롯이 기다렸다가 보낸다 (brief-kr.yml 머리말 7·8번).
+# 다른 워크플로가 그 구간에 깨어도 이 워크플로를 불러 준다 (kick-briefs.sh).
 # cron 은 UTC 고정이지만 gate 가 ET 실제 시각으로 판정하므로 서머타임과 무관하다.
 #   EDT(UTC−4) 발송 창 = 12:15~13:10 UTC
 #   EST(UTC−5) 발송 창 = 13:15~14:10 UTC
@@ -30,17 +31,24 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write   # kick-briefs.sh 가 국장 브리핑을 workflow_dispatch 로 부른다
 
 jobs:
   brief:
     runs-on: ubuntu-latest
-    timeout-minutes: 300   # 기다림(최대 240분) + 생성 몇 분
+    timeout-minutes: 360   # 기다림(최대 330분) + 생성 몇 분. 호스트 러너 잡 한도가 360분
     steps:
       # 스케줄 트리거는 "예약 시점"의 SHA 를 준다. 중복 판정도 커밋도 최신
       # main 기준이어야 하므로 명시적으로 main 을 받는다.
       - uses: actions/checkout@v4
         with:
           ref: main
+
+      # 게이트가 몇 시간 잘 수 있으므로 그 앞에서 부른다. 자기 시장(US)은 이 실행이 맡는다.
+      - name: 깬 김에 국장 브리핑 깨우기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/kick-briefs.sh KR
 
       - name: Gate — 지금 발송해야 하는지
         id: gate

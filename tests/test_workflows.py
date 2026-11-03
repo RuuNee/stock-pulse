@@ -142,6 +142,43 @@ def test_close_workflow_uses_close_gate_and_kind():
     assert sends and all("--kind close" in c for c in sends)
 
 
+KICK = "kick-briefs.sh"
+
+
+def kick_steps(data: dict) -> list[dict]:
+    return [step for spec in data["jobs"].values() for step in spec["steps"]
+            if KICK in (step.get("run") or "")]
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_every_scheduled_workflow_kicks_the_briefs(path):
+    """2026-11-03 브리핑 슬롯은 안 깼는데 다른 워크플로는 깨어 있었다. 어느 예약 실행이든
+    깨면 장전 브리핑을 불러 줘야 한다 — 하나라도 빠지면 그만큼 기회가 준다."""
+    data = load(path)
+    if not triggers(data).get("schedule"):
+        return
+    steps = kick_steps(data)
+    assert steps, f"{path.name}: {KICK} 를 부르지 않습니다"
+    own = {"brief-kr.yml": "KR", "brief-us.yml": "US"}.get(path.name)
+    for step in steps:
+        markets = set(step["run"].split(KICK, 1)[1].split())
+        # 자기 시장은 이 실행이 맡는다 — 자기를 부르면 '이미 돈다'로 늘 걸러질 뿐이다.
+        assert markets == {"KR", "US"} - {own}, f"{path.name}: 깨울 시장이 {sorted(markets)}"
+        assert "GH_TOKEN" in (step.get("env") or {}), f"{path.name}: gh 가 토큰을 못 받습니다"
+    # GITHUB_TOKEN 으로 workflow_dispatch 를 만들려면 actions: write 가 있어야 한다.
+    assert (data.get("permissions") or {}).get("actions") == "write", \
+        f"{path.name}: permissions 에 actions: write 가 없습니다"
+
+
+@pytest.mark.parametrize("name", BRIEFS)
+def test_kick_runs_before_the_wait(name):
+    """게이트가 몇 시간 잘 수 있다. 그 뒤에 부르면 다른 시장 브리핑이 그만큼 늦는다."""
+    steps = load(WORKFLOW_DIR / name)["jobs"]["brief"]["steps"]
+    kick = next(i for i, s in enumerate(steps) if KICK in (s.get("run") or ""))
+    gate = next(i for i, s in enumerate(steps) if s.get("id") == "gate")
+    assert kick < gate, f"{name}: 게이트(대기) 뒤에서 부릅니다"
+
+
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
 def test_scheduled_jobs_checkout_main(path):
     """스케줄 트리거는 예약 시점 SHA 를 준다 — 최대 3시간 묵은 트리로 판정하게 된다."""

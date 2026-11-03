@@ -45,6 +45,7 @@ jobs:
       # 끌어온다. 수집 함수는 전부 스텁이라 네트워크는 타지 않지만 임포트는 실물이다.
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: bash -n .github/scripts/commit-data.sh
+      - run: bash -n .github/scripts/kick-briefs.sh
       - run: python -m pytest tests -q
 
   # 웹은 파이썬 테스트가 전혀 안 건드린다. 예전에는 타입 오류가 Vercel 빌드

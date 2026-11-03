@@ -60,6 +60,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write   # kick-briefs.sh 가 장전 브리핑을 workflow_dispatch 로 부른다
 
 jobs:
   sync:
@@ -70,6 +71,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+
+      # 브리핑 슬롯이 안 깨는 날을 위해 깬 김에 장전 브리핑을 불러 준다 (스크립트 머리말).
+      - name: 깬 김에 장전 브리핑 깨우기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/kick-briefs.sh KR US
 
       # pip install 앞에 둔다 — 표준 라이브러리만 쓰므로 건너뛰는 슬롯은
       # 여기서 15초 만에 끝난다.

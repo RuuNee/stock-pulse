@@ -13,7 +13,8 @@
 먼저 깨진다.
 
 실측 지연(이 저장소 워크플로 로그): +6, +51, +58, +89, +114, +202 분 (2026-07),
-국장 +212~+239 분, 미장 +368~+400 분 (2026-10).
+국장 +212~+239 분, 미장 +368~+400 분 (2026-10), 대부분 버려지고 남은 것도 +5~+10시간
+(2026-11-03, 맨 아래 참고).
 """
 
 from __future__ import annotations
@@ -179,6 +180,44 @@ def test_the_late_cutoff_rescues_that_release():
 def test_late_cutoff_sits_after_the_window(market):
     """마감이 창보다 앞이면 지각 발송 경로가 영영 안 열린다."""
     assert _minutes(BRIEF_LATE_CUTOFF[market]) > _minutes(BRIEF_WINDOW[market][1])
+
+
+# --------------------------------------------------------------------------
+# 슬롯이 아예 안 깨는 날 — 2026-11-03
+# --------------------------------------------------------------------------
+# 위 커버리지 테스트는 "슬롯이 늦게라도 전부 깬다"를 가정한다. 그날 GitHub 은 예약 실행을
+# 5~10시간 밀고 대부분 버렸다. 미장 브리핑 슬롯은 하루 12개 중 2개만 깼고, 09:25Z~14:40Z
+# 에는 어떤 워크플로도 깨지 않았다. 아래는 실제로 깬 예약 실행이 창 시작 몇 분 전이었나
+# (음수 = 창 시작 뒤). 국장 창 시작 = 11-02 22:45Z, 미장 창 시작 = 11-03 13:15Z(EST).
+WOKE_2026_11_03 = {
+    "KR": {"brief": [-127],
+           # data-sync · brief-kr-close · pulse 가 11-02 17:25Z~19:46Z 에 깼다
+           "others": [319, 318, 292, 272, 259, 235, 233, 195, 184, 178]},
+    "US": {"brief": [283],
+           # pulse 07:37Z, brief-kr 09:24Z
+           "others": [337, 230]},
+}
+OLD_MAX_WAIT_MIN = 240   # 그날 쓰던 값
+
+
+def _on_time(woke: list[int], max_wait: int) -> list[int]:
+    return [m for m in woke if 0 <= m <= max_wait]
+
+
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_2026_11_03_brief_slots_alone_missed(market):
+    """그날 브리핑 자기 슬롯은 둘 다 정시 발송으로 못 이어졌다 — 국장 09:54 KST 지각,
+    미장은 283분 전에 깬 슬롯이 대기 한도 240분에 걸려 그냥 끝났다."""
+    assert not _on_time(WOKE_2026_11_03[market]["brief"], OLD_MAX_WAIT_MIN)
+
+
+@pytest.mark.parametrize("market", ["KR", "US"])
+def test_2026_11_03_is_rescued_by_other_workflows(market):
+    """다른 워크플로가 깬 김에 불러 주면(kick-briefs.sh) 둘 다 정시였다.
+    대기 한도를 올리지 않아도 이 경로만으로 둘 다 구해진다."""
+    others = WOKE_2026_11_03[market]["others"]
+    assert _on_time(others, OLD_MAX_WAIT_MIN)
+    assert _on_time(others + WOKE_2026_11_03[market]["brief"], BRIEF_MAX_WAIT_MIN)
 
 
 @pytest.mark.parametrize("workflow", ["brief-kr.yml", "brief-us.yml"])

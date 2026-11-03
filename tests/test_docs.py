@@ -67,6 +67,11 @@ def test_no_removed_feed_left_in_docs():
      lambda: config.BRIEF_KEEP_DAYS),
     ("05-운영가이드.md", r"`BRIEF_KEEP_DAYS` \(기본 (\d+)일\)",
      lambda: config.BRIEF_KEEP_DAYS),
+    # 브리핑이 왜 몇 시에 깨서 기다리는지 운영자가 읽는 숫자다.
+    ("04-알림과스케줄.md", r"`config\.BRIEF_MAX_WAIT_MIN` = (\d+)",
+     lambda: config.BRIEF_MAX_WAIT_MIN),
+    ("10-전체기술스펙.md", r"`config\.BRIEF_MAX_WAIT_MIN`\((\d+)분\)",
+     lambda: config.BRIEF_MAX_WAIT_MIN),
 ])
 def test_documented_defaults_match_config(doc, pattern, value):
     found = re.search(pattern, (DOCS / doc).read_text(encoding="utf-8"))
