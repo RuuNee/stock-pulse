@@ -1,0 +1,5 @@
+# 속보 감시 서버 전용 — pandas·FinanceDataReader 없이 가볍게 (deploy/watch/setup.sh 가 깐다)
+feedparser>=6.0.11
+requests>=2.31
+python-dotenv>=1.0.0
+anthropic>=2.3,<3

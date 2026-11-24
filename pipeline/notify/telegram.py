@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..config import telegram_chat_ids, telegram_token
+from ..config import telegram_chat_ids, telegram_token, watch_chat_ids
 from ..util import log
 
 _API = "https://api.telegram.org/bot{token}/{method}"
@@ -262,6 +262,82 @@ def _post(token: str, chat_id: str, text: str, retries: int) -> bool:
             log.warn(f"telegram send error: {exc}")
         time.sleep(1.5 * (attempt + 1))
     return False
+
+
+def post(text: str, *, silent: bool = False, reply_to: dict[str, int] | None = None,
+         chat_ids: list[str] | None = None, token: str | None = None) -> dict[str, int]:
+    """속보 알림 한 건을 보내고 받는 사람마다 메시지 id 를 돌려준다.
+
+    브리핑용 `send` 와 달리 나눠 보내지 않는다 — 알림은 짧고, 나중에 같은 메시지를
+    고쳐야(`edit`) 해서 한 덩어리여야 한다. 실패한 수신자는 결과에서 빠진다.
+    `silent` 면 알림음 없이 도착한다. `reply_to` 는 {chat_id: message_id}.
+    """
+    token = token or telegram_token()
+    targets = chat_ids if chat_ids is not None else watch_chat_ids()
+    if not token or not targets:
+        log.warn("telegram token/chat_id missing — skipping alert")
+        return {}
+    out: dict[str, int] = {}
+    for i, target in enumerate(targets):
+        if i:
+            time.sleep(_RECIPIENT_DELAY_SEC)
+        payload = {"chat_id": target, "text": text[:4000], "parse_mode": "HTML",
+                   "disable_web_page_preview": True, "disable_notification": silent}
+        if reply_to and reply_to.get(str(target)):
+            payload["reply_parameters"] = {"message_id": reply_to[str(target)],
+                                           "allow_sending_without_reply": True}
+        result = _call(token, "sendMessage", payload)
+        if result and result.get("message_id"):
+            out[str(target)] = int(result["message_id"])
+    return out
+
+
+def edit(ids: dict[str, int], text: str, *, token: str | None = None) -> bool:
+    """`post` 로 보낸 메시지를 고친다. 알림음은 다시 울리지 않는다."""
+    token = token or telegram_token()
+    if not token or not ids:
+        return False
+    ok = True
+    for chat_id, message_id in ids.items():
+        result = _call(token, "editMessageText", {
+            "chat_id": chat_id, "message_id": message_id, "text": text[:4000],
+            "parse_mode": "HTML", "disable_web_page_preview": True})
+        ok = ok and result is not None
+    return ok
+
+
+def _call(token: str, method: str, payload: dict, retries: int = 3):
+    """Bot API 호출 하나. 성공하면 `result`, 실패하면 None. 429 는 시키는 만큼 기다린다."""
+    import json
+    url = _API.format(token=token, method=method)
+    data = json.dumps(payload).encode()
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, data=data,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = json.loads(resp.read())
+                return body.get("result") if body.get("ok") else None
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", "replace")[:300]
+            if exc.code == 400 and "message is not modified" in raw:
+                return {}      # 같은 내용으로 고친 것 — 실패가 아니다
+            log.warn(f"telegram {method} HTTP {exc.code}: {raw[:200]}")
+            if exc.code == 429:
+                try:
+                    wait = json.loads(raw).get("parameters", {}).get("retry_after", 2)
+                except ValueError:
+                    wait = 2
+                time.sleep(min(float(wait), 30))
+                continue
+            hint = _hint(exc.code, raw)
+            if hint:
+                log.warn(f"  → {hint}")
+            return None
+        except Exception as exc:
+            log.warn(f"telegram {method} error: {exc}")
+            time.sleep(1.0 * (attempt + 1))
+    return None
 
 
 def _hint(code: int, body: str) -> str | None:

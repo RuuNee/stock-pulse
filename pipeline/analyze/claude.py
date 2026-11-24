@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import threading
 
 from ..config import CLAUDE_ENABLED, CLAUDE_PRICES, anthropic_key
 from ..util import log
@@ -24,6 +25,7 @@ _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _client = None
 _disabled: set[str] = set()       # 이번 실행에서 죽은 모델. "*" 는 키·결제 문제로 전부
 _usage: dict[str, list[int]] = {}  # model -> [calls, input_tokens, output_tokens]
+_lock = threading.Lock()           # 감시 서버는 여러 스레드가 동시에 부른다
 
 
 def available(model: str | None = None) -> bool:
@@ -54,8 +56,13 @@ def _has_fallback(model: str) -> bool:
 
 
 def ask_json(system: str, user: str, schema: dict, *, model: str, effort: str,
-             max_tokens: int, fallback: bool = False):
-    """한 번 묻고 스키마에 맞는 JSON(dict)을 돌려준다. 실패하면 None."""
+             max_tokens: int, fallback: bool = False, timeout: float | None = None,
+             retries: int | None = None):
+    """한 번 묻고 스키마에 맞는 JSON(dict)을 돌려준다. 실패하면 None.
+
+    `timeout`·`retries` 는 이 호출에만 적용한다. 속보 감시의 즉시 판정처럼 몇 초 안에
+    답이 없으면 기다리지 않고 넘어가야 하는 곳에서 쓴다(시간 초과도 None).
+    """
     if not available(model):
         return None
     import anthropic
@@ -68,12 +75,20 @@ def ask_json(system: str, user: str, schema: dict, *, model: str, effort: str,
         "output_config": {"effort": effort,
                           "format": {"type": "json_schema", "schema": schema}},
     }
+    client = _get_client()
+    if timeout is not None or retries is not None:
+        opts = {}
+        if timeout is not None:
+            opts["timeout"] = timeout
+        if retries is not None:
+            opts["max_retries"] = retries
+        client = client.with_options(**opts)
     try:
         if fallback and _has_fallback(model):
-            resp = _get_client().beta.messages.create(
+            resp = client.beta.messages.create(
                 betas=[_FALLBACK_BETA], fallbacks="default", **params)
         else:
-            resp = _get_client().messages.create(**params)
+            resp = client.messages.create(**params)
     except anthropic.AuthenticationError:
         log.warn("claude: API 키가 거절됨 — 이번 실행은 Claude 를 쓰지 않습니다")
         _disabled.add("*")
@@ -140,16 +155,24 @@ def _record(resp) -> None:
         (getattr(usage, "cache_read_input_tokens", 0) or 0) + \
         (getattr(usage, "cache_creation_input_tokens", 0) or 0)
     tokens_out = getattr(usage, "output_tokens", 0) or 0
-    row = _usage.setdefault(model, [0, 0, 0])
-    row[0] += 1
-    row[1] += tokens_in
-    row[2] += tokens_out
+    with _lock:
+        row = _usage.setdefault(model, [0, 0, 0])
+        row[0] += 1
+        row[1] += tokens_in
+        row[2] += tokens_out
     log.info(f"claude[{model}] in={tokens_in:,} out={tokens_out:,} ≈ ${cost(model, tokens_in, tokens_out):.4f}")
 
 
 def cost(model: str, tokens_in: int, tokens_out: int) -> float:
     price_in, price_out = CLAUDE_PRICES.get(model, (0.0, 0.0))
     return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
+
+
+def total_cost() -> float:
+    """이 프로세스가 지금까지 쓴 대략의 금액($). 캐시 읽기도 정가로 쳐서 조금 넉넉하다."""
+    with _lock:
+        rows = list(_usage.items())
+    return sum(cost(model, tin, tout) for model, (_, tin, tout) in rows)
 
 
 def stats() -> str:

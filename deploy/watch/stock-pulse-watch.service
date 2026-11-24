@@ -1,0 +1,27 @@
+[Unit]
+Description=Stock Pulse 속보 감시 (공시·보도자료·시세 → 텔레그램)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=stockpulse
+Group=stockpulse
+WorkingDirectory=/opt/stock-pulse
+EnvironmentFile=/etc/stock-pulse-watch.env
+Environment=WATCH_STATE_DIR=/var/lib/stock-pulse/watch
+Environment=STOCK_PULSE_CACHE_DIR=/var/lib/stock-pulse/cache
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/stock-pulse/.venv/bin/python -m pipeline.run watch
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/stock-pulse
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target

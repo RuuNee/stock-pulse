@@ -1,0 +1,8 @@
+[Unit]
+Description=Stock Pulse 속보 감시 — 새 코드 받기
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/stock-pulse-watch-update

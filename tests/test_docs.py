@@ -72,9 +72,24 @@ def test_no_removed_feed_left_in_docs():
      lambda: config.BRIEF_MAX_WAIT_MIN),
     ("10-전체기술스펙.md", r"`config\.BRIEF_MAX_WAIT_MIN`\((\d+)분\)",
      lambda: config.BRIEF_MAX_WAIT_MIN),
+    # 속보 감시 — 운영자가 "하루에 얼마까지 쓰나 / 몇 % 움직이면 오나"를 읽는 숫자다.
+    ("04-알림과스케줄.md", r"`WATCH_DAILY_BUDGET_USD`\(기본 ([\d.]+)\)",
+     lambda: config.WATCH_DAILY_BUDGET_USD),
+    ("04-알림과스케줄.md", r"`WATCH_MOVE_1M_PCT`\(기본 ([\d.]+)%\)",
+     lambda: config.WATCH_MOVE_1M_PCT),
+    ("04-알림과스케줄.md", r"`WATCH_MOVE_5M_PCT`\(기본 ([\d.]+)%\)",
+     lambda: config.WATCH_MOVE_5M_PCT),
 ])
 def test_documented_defaults_match_config(doc, pattern, value):
     found = re.search(pattern, (DOCS / doc).read_text(encoding="utf-8"))
     assert found, f"{doc}: '{pattern}' 를 못 찾았습니다 (문구가 바뀌었으면 테스트도 갱신)"
     assert float(found.group(1)) == float(value()), \
         f"{doc}: 문서 {found.group(1)} vs 코드 {value()}"
+
+
+def test_watch_sources_are_documented():
+    """속보 감시가 보는 창구(뉴스룸·보도자료)를 늘리거나 빼면 01 §6 표도 같이 바꾼다."""
+    text = SOURCES_DOC.read_text(encoding="utf-8")
+    section = text[text.index("## 6. 속보 감시 소스"):]
+    for key in [*config.WATCH_NEWSROOMS, *config.WATCH_WIRE_FEEDS]:
+        assert f"(`{key}`)" in section, f"01-데이터소스.md §6 에 없는 속보 소스: {key}"

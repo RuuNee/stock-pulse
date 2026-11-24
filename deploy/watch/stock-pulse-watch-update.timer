@@ -1,0 +1,10 @@
+[Unit]
+Description=Stock Pulse 속보 감시 — 10분마다 새 코드 확인
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

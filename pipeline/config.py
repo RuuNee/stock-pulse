@@ -17,7 +17,8 @@ from zoneinfo import ZoneInfo
 # --------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
-CACHE_DIR = ROOT / ".cache"
+# 감시 서버는 코드 폴더를 읽기 전용으로 돌린다(deploy/watch) — 캐시는 쓸 수 있는 곳으로 뺀다.
+CACHE_DIR = Path(os.getenv("STOCK_PULSE_CACHE_DIR") or (ROOT / ".cache"))
 
 KST = ZoneInfo("Asia/Seoul")
 ET = ZoneInfo("America/New_York")
@@ -834,6 +835,67 @@ TRANSLATE_TICKER_NEWS = False  # translate ticker news via new calls? (cache reu
 TRANSLATE_BATCH = 15           # strings per translation call
 TRANSLATE_MAX_ITEMS = 200      # hard cap on translated strings per run
 
+# --------------------------------------------------------------------------
+# 속보 감시 (watch) — 상시 서버가 몇 초 간격으로 공식 발표·공시·시세를 본다 (2026-11-24).
+#
+# 브리핑은 하루 세 번이라 11/23 엔비디아 CEO 복귀(22:55 KST 발표, 그 1분에 +8%→+19%)가
+# 다음 날 07:46 에야 텔레그램에 왔다. 감시 서버가 그 공백을 메운다 — md파일/04 §6.
+# GitHub Actions 예약 실행은 하루 3~4번만 깨서 이 용도로 못 쓴다. 상시 프로세스가
+# 필요하고, 오라클 클라우드 무료 등급 서버에서 돈다(md파일/05 ⑧, deploy/watch/).
+# --------------------------------------------------------------------------
+WATCH_STATE_DIR = Path(os.getenv("WATCH_STATE_DIR") or (CACHE_DIR / "watch"))
+# 서버에는 data/ 를 받지 않는다(저장소가 크다). 대상 선정 재료는 원격에서 읽는다.
+WATCH_DATA_BASE = "https://raw.githubusercontent.com/RuuNee/stock-pulse/main/data"
+WATCH_HTTP_TIMEOUT = 8
+
+# 공식 발표 창구 — 가장 빠른 경로. 주기는 초. 2026-11-24 실측으로 살아 있는 것만.
+WATCH_DART_RSS = "https://dart.fss.or.kr/api/todayRSS.xml"   # 키 불필요, 최근 50건
+WATCH_DART_SEC = 5
+WATCH_WIRE_FEEDS: dict[str, dict] = {
+    # 전 세계 보도자료가 다 섞여 있다 — 거래소 표기 `(NASDAQ: XXX)` 가 있는 것만 본다.
+    # GlobeNewswire·Business Wire RSS 는 2026-11-24 실측 403/빈 피드라 못 쓴다.
+    "prnewswire": {"name": "PR Newswire",
+                   "url": "https://www.prnewswire.com/rss/news-releases-list.rss"},
+}
+WATCH_WIRE_SEC = 15            # CDN 이 60초 캐시한다(max-age=60) — 더 자주 봐도 소용없다
+WATCH_NEWSROOMS: dict[str, str] = {
+    # 회사 공식 뉴스룸. 11/23 엔비디아 복귀 발표는 여기에 13:55:00Z 로 올라왔고, 주가는
+    # 바로 그 분(08:55 ET)에 뛰었다. 대상으로 뽑힌 회사만 돈다.
+    "NVDA": "https://nvidianews.nvidia.com/rss.xml",
+    "AAPL": "https://www.apple.com/newsroom/rss-feed.rss",
+    "AMD": "https://ir.amd.com/news-events/press-releases/rss",
+}
+WATCH_NEWSROOM_SEC = 10
+WATCH_NEWS_SEC = 60            # 일반 뉴스 피드(FEEDS) — 매체 RSS 자체가 분 단위로 늦다
+
+# 시세 — 네이버 실시간 시세. 국장·미장(프리·애프터 포함)을 여러 종목 한 번에 준다.
+WATCH_QUOTE_KR_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{codes}"
+WATCH_QUOTE_US_URL = "https://polling.finance.naver.com/api/realtime/worldstock/stock/{codes}"
+WATCH_PRICE_SEC = 5
+WATCH_PRICE_IDLE_SEC = 60      # 대상 종목 시장이 전부 닫혀 있을 때
+WATCH_MOVE_1M_PCT = 2.0        # 1분 새 ±2% 이상이면 급변
+WATCH_MOVE_5M_PCT = 3.5        # 5분 새 ±3.5% 이상이면 급변
+WATCH_MOVE_STEP_PCT = 3.0      # 알림 뒤 3%p 더 움직이면 같은 메시지의 주가 줄을 고친다
+WATCH_INCIDENT_MIN = 60        # 같은 종목 소식을 한 메시지로 묶는 시간
+
+# AI 대상 선정 — 최근 이슈·예정된 일정·급등락을 보고 Claude 가 고른다.
+WATCH_TARGET_MAX = 30
+WATCH_TARGET_TIMES_KST = ("07:20", "15:40", "21:30")   # 국장 전 · 국장 뒤 · 미장 전
+WATCH_HOT_HOURS = 24           # 대상 밖 종목에서 알림이 나면 이만큼 대상에 넣는다
+
+# Claude — 즉시 판정은 속도가 전부라 Haiku, 대상 선정·최종 확인은 Opus.
+WATCH_QUICK_MODEL = os.getenv("WATCH_QUICK_MODEL", "claude-haiku-5-5")
+WATCH_SCREEN_MODEL = os.getenv("WATCH_SCREEN_MODEL", "claude-haiku-5-5")
+WATCH_DEEP_MODEL = os.getenv("WATCH_DEEP_MODEL", "claude-opus-5-5")
+WATCH_QUICK_TIMEOUT_SEC = 5    # 넘으면 판정 없이 먼저 보내고 메시지를 나중에 고친다
+WATCH_SCREEN_SEC = 60          # 새 기사 1차 선별을 모아서 부르는 간격
+WATCH_SCREEN_BATCH = 40
+WATCH_SCREEN_MIN_IMPACT = 4    # 0~5. 이 이상만 Opus 확인으로
+WATCH_CONFIRM_MAX_PER_DAY = 12
+# 하루(KST) 상한. 넘으면 선별·확인·대상 선정을 멈추고, 대상 종목의 즉시 판정만
+# 1.5배까지 계속한다. 그 뒤엔 규칙 알림(공식 발표·시세 급변)만 나간다.
+WATCH_DAILY_BUDGET_USD = 0.8
+
 
 def gemini_key() -> str | None:
     return os.getenv("GEMINI_API_KEY") or None
@@ -873,6 +935,13 @@ def telegram_chat_ids() -> list[str]:
         if part and part not in out:
             out.append(part)
     return out
+
+
+def watch_chat_ids() -> list[str]:
+    """속보 알림 수신자. `WATCH_TELEGRAM_CHAT_ID` 가 있으면 그쪽, 없으면 브리핑과 같다."""
+    raw = os.getenv("WATCH_TELEGRAM_CHAT_ID") or ""
+    ids = [p.strip() for p in re.split(r"[,\s]+", raw) if p.strip()]
+    return list(dict.fromkeys(ids)) or telegram_chat_ids()
 
 
 def universe(market: str) -> list[tuple[str, str, str, list[str]]]:

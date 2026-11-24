@@ -11,6 +11,9 @@
     python -m pipeline.run brief --market KR --kind close --send   # 장 마감 브리핑
     python -m pipeline.run close-gate --market KR   # true/false: 마감 브리핑을 지금 보낼까?
     python -m pipeline.run telegram-whoami [--token ...]
+    python -m pipeline.run watch                 # 속보 감시 서버 (상시 실행)
+    python -m pipeline.run watch --once          # 감시 소스·시세·키 점검만
+    python -m pipeline.run watch --dry-run       # 텔레그램 대신 콘솔에 찍는다
 """
 
 from __future__ import annotations
@@ -165,6 +168,13 @@ def _cmd_doctor(args) -> int:
     return doctor_run()
 
 
+def _cmd_watch(args) -> int:
+    from .watch import runner
+    if args.once:
+        return runner.smoke()
+    return runner.Watcher(dry_run=args.dry_run).run()
+
+
 def _cmd_whoami(args) -> int:
     from .notify import telegram
     telegram.whoami(args.token)
@@ -239,6 +249,11 @@ def main(argv=None) -> int:
 
     p_doc = sub.add_parser("doctor", help="check data sources")
     p_doc.set_defaults(func=_cmd_doctor)
+
+    p_watch = sub.add_parser("watch", help="속보 감시 서버 — 공시·보도자료·시세를 몇 초 간격으로 본다")
+    p_watch.add_argument("--once", action="store_true", help="소스·시세·키만 한 번 점검하고 끝낸다")
+    p_watch.add_argument("--dry-run", action="store_true", help="텔레그램 대신 콘솔에 찍는다")
+    p_watch.set_defaults(func=_cmd_watch)
 
     p_who = sub.add_parser("telegram-whoami", help="list chat_ids that messaged the bot")
     p_who.add_argument("--token", help="bot token (or set TELEGRAM_BOT_TOKEN)")

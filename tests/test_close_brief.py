@@ -134,6 +134,9 @@ def test_unclosed_or_other_day_is_left_alone():
 
 def test_close_brief_files_and_pruning(data_dir, monkeypatch):
     monkeypatch.setattr(brief, "DATA_DIR", data_dir)
+    # 보관 기간(BRIEF_KEEP_DAYS)을 실제 오늘로 재면 날짜가 지날수록 2026-10-15 파일이 지워져
+    # 테스트가 저절로 깨진다(2026-11-14부터 실패) — 브리핑 날짜를 오늘로 고정한다.
+    monkeypatch.setattr(brief, "now_utc", lambda: datetime(2026, 10, 15, 8, 0, tzinfo=timezone.utc))
     brief.write_brief({"market": "KR", "kind": "close", "date": "2026-10-15"})
     assert (data_dir / "brief" / "latest-KR-close.json").exists()
     assert (data_dir / "brief" / "2026-10-15-KR-close.json").exists()
