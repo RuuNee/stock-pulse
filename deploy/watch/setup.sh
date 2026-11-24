@@ -19,8 +19,10 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -q
-apt-get install -y -q --no-install-recommends git python3 python3-venv ca-certificates tzdata
+# 새 서버는 첫 부팅 때 자동 업데이트가 apt 잠금을 쥐고 있다 — 풀릴 때까지 기다린다(최대 10분).
+APT="apt-get -o DPkg::Lock::Timeout=600"
+$APT update -y -q
+$APT install -y -q --no-install-recommends git python3 python3-venv ca-certificates tzdata
 
 id -u "$APP_USER" >/dev/null 2>&1 || \
   useradd --system --home-dir "$STATE_DIR" --shell /usr/sbin/nologin "$APP_USER"
